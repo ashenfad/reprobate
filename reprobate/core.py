@@ -446,6 +446,12 @@ def _render_object(obj: object, budget: int) -> str:
         }
     elif hasattr(obj, "__dict__"):
         attrs = {k: v for k, v in vars(obj).items() if not k.startswith("_")}
+    elif hasattr(obj, "__slots__"):
+        attrs = {
+            s: getattr(obj, s)
+            for s in obj.__slots__
+            if not s.startswith("_") and hasattr(obj, s)
+        }
     else:
         attrs = {}
 

@@ -96,6 +96,17 @@ class TestObjects:
         assert len(r) <= 40
         assert "Bar" in r
 
+    def test_slotted_object(self):
+        class Slotted:
+            __slots__ = ("x", "y")
+
+            def __init__(self, x, y):
+                self.x = x
+                self.y = y
+
+        r = reprobate.render(Slotted(1, 2), 100)
+        assert r == "Slotted(x=1, y=2)"
+
     def test_type_stubs(self):
         class Thing:
             def __init__(self):
