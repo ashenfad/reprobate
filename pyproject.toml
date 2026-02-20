@@ -32,6 +32,7 @@ dev = [
     "ruff",
     "pre-commit",
     "pytest",
+    "pytest-timeout",
 ]
 test = [
     "pytest",
