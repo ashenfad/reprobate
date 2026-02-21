@@ -1,4 +1,4 @@
-# reprobate
+# reprobate 🖨️
 
 Budget-controlled repr for Python objects.
 
