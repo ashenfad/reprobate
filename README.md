@@ -106,7 +106,7 @@ def render_my_model(obj: MyModel, budget: int) -> str:
 | Collections | `deque`, `defaultdict`, `Counter` | Type-aware wrappers (factory name, most-common order) |
 | Structured | `dataclass`, `namedtuple` | Field-aware decomposition, respects `repr=False` |
 | Objects | anything with `__dict__` | Attribute decomposition, public attrs only |
-| Optional | `Table`, `Array`, `ChunkedArray`, `ndarray`, `DataFrame`, `Series`, `Image`, `BaseModel` | Shape/dtype/columns summary (auto-activates when lib is installed) |
+| Optional | numpy, pandas, polars, pyarrow, Pillow, pydantic | Shape/dtype/columns summary (auto-activates when lib is installed) |
 
 ## Development
 
