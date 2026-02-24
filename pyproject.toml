@@ -25,8 +25,9 @@ dependencies = []
 [project.optional-dependencies]
 pandas = ["pandas"]
 numpy = ["numpy"]
+polars = ["polars"]
 pydantic = ["pydantic"]
-all = ["pandas", "numpy", "pydantic"]
+all = ["pandas", "numpy", "polars", "pydantic"]
 dev = [
     "ruff",
     "pre-commit",
@@ -38,6 +39,7 @@ test = [
     "pytest-timeout",
     "numpy",
     "pandas",
+    "polars",
     "pydantic",
 ]
 
