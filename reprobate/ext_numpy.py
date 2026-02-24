@@ -20,7 +20,7 @@ if np is not None:
         if budget <= len(header) + 1:
             return f"ndarray({shape})"[:budget]
 
-        remaining = budget - len(header) - 2  # ", " before data, ")" at end
+        remaining = budget - len(header) - 5  # ", [" before data, "])" at end
         if remaining < 5:
             return (header + ")")[:budget]
 

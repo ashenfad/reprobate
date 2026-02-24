@@ -27,13 +27,13 @@ if pd is not None:
         if budget <= len(header) + 1:
             return f"DataFrame({rows}x{cols})"[:budget]
 
-        remaining = budget - len(header) - 2  # ", " before cols, ")" at end
+        remaining = budget - len(header) - 5  # ", [" before cols, "])" at end
         if remaining < 5:
             return (header + ")")[:budget]
 
         # Show column names
         col_parts: list[str] = []
-        used = 2  # "[]"
+        used = 0
 
         for i, name in enumerate(col_names):
             sep = 2 if col_parts else 0
