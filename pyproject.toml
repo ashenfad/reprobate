@@ -25,9 +25,8 @@ dependencies = []
 [project.optional-dependencies]
 pandas = ["pandas"]
 numpy = ["numpy"]
-torch = ["torch"]
 pydantic = ["pydantic"]
-all = ["pandas", "numpy", "torch", "pydantic"]
+all = ["pandas", "numpy", "pydantic"]
 dev = [
     "ruff",
     "pre-commit",
@@ -37,6 +36,9 @@ dev = [
 test = [
     "pytest",
     "pytest-timeout",
+    "numpy",
+    "pandas",
+    "pydantic",
 ]
 
 [tool.ruff]

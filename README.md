@@ -12,7 +12,7 @@ Renders any Python object into a string that fits within a character budget. Nes
 - **Cycle detection** -- circular references render as `<...>` instead of stack overflows
 - **Type registry** -- `@register(MyType)` for custom budget-aware renderers
 - **Protocol method** -- `__budget_repr__(self, budget)` on any class
-- **Optional extensions** -- numpy, pandas, torch, pydantic renderers (guarded imports, zero cost if absent)
+- **Optional extensions** -- numpy, pandas, pydantic renderers (guarded imports, zero cost if absent)
 
 ## Install
 
@@ -20,7 +20,6 @@ Renders any Python object into a string that fits within a character budget. Nes
 pip install reprobate              # core, zero dependencies
 pip install reprobate[numpy]       # adds ndarray renderer
 pip install reprobate[pandas]      # adds DataFrame/Series renderers
-pip install reprobate[torch]       # adds Tensor renderer
 pip install reprobate[pydantic]    # adds BaseModel renderer
 pip install reprobate[all]         # all optional renderers
 ```
@@ -109,7 +108,7 @@ def render_my_model(obj: MyModel, budget: int) -> str:
 | Collections | `deque`, `defaultdict`, `Counter` | Type-aware wrappers (factory name, most-common order) |
 | Structured | `dataclass`, `namedtuple` | Field-aware decomposition, respects `repr=False` |
 | Objects | anything with `__dict__` | Attribute decomposition, public attrs only |
-| Optional | `ndarray`, `DataFrame`, `Series`, `Tensor`, `BaseModel` | Shape/dtype + data peek (requires extras) |
+| Optional | `ndarray`, `DataFrame`, `Series`, `BaseModel` | Shape/dtype + data peek (requires extras) |
 
 ## Development
 

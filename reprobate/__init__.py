@@ -16,5 +16,4 @@ from . import (
     ext_numpy,  # noqa: F401
     ext_pandas,  # noqa: F401
     ext_pydantic,  # noqa: F401
-    ext_torch,  # noqa: F401
 )
