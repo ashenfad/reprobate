@@ -15,5 +15,6 @@ __all__ = [
 from . import (
     ext_numpy,  # noqa: F401
     ext_pandas,  # noqa: F401
+    ext_polars,  # noqa: F401
     ext_pydantic,  # noqa: F401
 )
