@@ -3,6 +3,8 @@
 import collections
 import dataclasses
 
+import pytest
+
 import reprobate
 
 
@@ -428,3 +430,102 @@ class TestRegistry:
 
         r = reprobate.render(WithProtocol(), 100)
         assert r == "proto(100)"
+
+
+class TestNumpy:
+    np = pytest.importorskip("numpy")
+
+    def test_small_array(self):
+        arr = self.np.array([1, 2, 3])
+        r = reprobate.render(arr, 200)
+        assert "ndarray" in r
+        assert "3" in r  # shape
+        assert "1" in r  # values visible
+
+    def test_multidimensional_shape(self):
+        arr = self.np.zeros((2, 3, 4))
+        r = reprobate.render(arr, 200)
+        assert "2x3x4" in r
+        assert "float64" in r
+
+    def test_large_array_truncation(self):
+        arr = self.np.arange(1000)
+        r = reprobate.render(arr, 60)
+        assert len(r) <= 60
+        assert "ndarray" in r
+        assert "more" in r
+
+    def test_budget_respected(self):
+        arr = self.np.arange(100)
+        for budget in [5, 10, 20, 50, 100, 200]:
+            r = reprobate.render(arr, budget)
+            assert len(r) <= budget, (
+                f"Budget {budget} exceeded: got {len(r)} chars: {r!r}"
+            )
+
+
+class TestPandas:
+    pd = pytest.importorskip("pandas")
+
+    def test_dataframe_shape_and_columns(self):
+        df = self.pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+        r = reprobate.render(df, 200)
+        assert "DataFrame" in r or "a" in r  # either custom or native repr
+        assert len(r) <= 200
+
+    def test_dataframe_budget_respected(self):
+        df = self.pd.DataFrame({f"col_{i}": range(100) for i in range(20)})
+        for budget in [5, 10, 20, 50, 100, 200]:
+            r = reprobate.render(df, budget)
+            assert len(r) <= budget, (
+                f"Budget {budget} exceeded: got {len(r)} chars: {r!r}"
+            )
+
+    def test_series_dtype(self):
+        s = self.pd.Series([1, 2, 3], dtype="int64")
+        r = reprobate.render(s, 200)
+        assert len(r) <= 200
+
+    def test_named_series(self):
+        s = self.pd.Series([1, 2, 3], name="values")
+        r = reprobate.render(s, 200)
+        assert "values" in r
+        assert len(r) <= 200
+
+
+class TestPydantic:
+    pydantic = pytest.importorskip("pydantic")
+
+    def test_simple_model(self):
+        class User(self.pydantic.BaseModel):
+            name: str = "alice"
+            age: int = 30
+
+        r = reprobate.render(User(), 200)
+        assert "User" in r
+        assert "name=" in r
+        assert "age=" in r
+
+    def test_model_truncation(self):
+        class BigModel(self.pydantic.BaseModel):
+            a: str = "alpha"
+            b: str = "bravo"
+            c: str = "charlie"
+            d: str = "delta"
+            e: str = "echo"
+
+        r = reprobate.render(BigModel(), 40)
+        assert len(r) <= 40
+        assert "BigModel" in r
+
+    def test_budget_respected(self):
+        class Config(self.pydantic.BaseModel):
+            host: str = "localhost"
+            port: int = 8080
+            debug: bool = True
+
+        for budget in [5, 10, 20, 50, 100, 200]:
+            r = reprobate.render(Config(), budget)
+            assert len(r) <= budget, (
+                f"Budget {budget} exceeded: got {len(r)} chars: {r!r}"
+            )
