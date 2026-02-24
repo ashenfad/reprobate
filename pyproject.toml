@@ -26,9 +26,10 @@ dependencies = []
 arrow = ["pyarrow"]
 pandas = ["pandas"]
 numpy = ["numpy"]
+pil = ["Pillow"]
 polars = ["polars"]
 pydantic = ["pydantic"]
-all = ["pyarrow", "pandas", "numpy", "polars", "pydantic"]
+all = ["pyarrow", "pandas", "numpy", "Pillow", "polars", "pydantic"]
 dev = [
     "ruff",
     "pre-commit",
@@ -40,6 +41,7 @@ test = [
     "pytest-timeout",
     "numpy",
     "pandas",
+    "Pillow",
     "polars",
     "pyarrow",
     "pydantic",
