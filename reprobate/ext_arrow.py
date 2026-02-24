@@ -26,13 +26,13 @@ if pa is not None:
         if budget <= len(header) + 1:
             return f"Table({rows}x{cols})"[:budget]
 
-        remaining = budget - len(header) - 2  # ", " before cols, ")" at end
+        remaining = budget - len(header) - 5  # ", [" before cols, "])" at end
         if remaining < 5:
             return (header + ")")[:budget]
 
         # Show column names
         col_parts: list[str] = []
-        used = 2  # "[]"
+        used = 0
 
         for i, name in enumerate(col_names):
             sep = 2 if col_parts else 0
@@ -75,7 +75,7 @@ if pa is not None:
         if budget <= len(header) + 1:
             return f"Array({n}, {dtype})"[:budget]
 
-        remaining = budget - len(header) - 2  # ", " before data, ")" at end
+        remaining = budget - len(header) - 5  # ", [" before data, "])" at end
         if remaining < 5:
             return (header + ")")[:budget]
 
