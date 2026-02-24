@@ -12,12 +12,13 @@ Renders any Python object into a string that fits within a character budget. Nes
 - **Cycle detection** -- circular references render as `<...>` instead of stack overflows
 - **Type registry** -- `@register(MyType)` for custom budget-aware renderers
 - **Protocol method** -- `__budget_repr__(self, budget)` on any class
-- **Optional extensions** -- numpy, pandas, polars, pydantic renderers (guarded imports, zero cost if absent)
+- **Optional extensions** -- arrow, numpy, pandas, polars, pydantic renderers (guarded imports, zero cost if absent)
 
 ## Install
 
 ```bash
 pip install reprobate              # core, zero dependencies
+pip install reprobate[arrow]       # adds PyArrow Table/Array renderers
 pip install reprobate[numpy]       # adds ndarray renderer
 pip install reprobate[pandas]      # adds DataFrame/Series renderers
 pip install reprobate[polars]      # adds polars DataFrame/Series renderers
@@ -109,7 +110,7 @@ def render_my_model(obj: MyModel, budget: int) -> str:
 | Collections | `deque`, `defaultdict`, `Counter` | Type-aware wrappers (factory name, most-common order) |
 | Structured | `dataclass`, `namedtuple` | Field-aware decomposition, respects `repr=False` |
 | Objects | anything with `__dict__` | Attribute decomposition, public attrs only |
-| Optional | `ndarray`, `DataFrame`, `Series`, `BaseModel` | Shape/dtype/columns summary (requires extras) |
+| Optional | `Table`, `Array`, `ChunkedArray`, `ndarray`, `DataFrame`, `Series`, `BaseModel` | Shape/dtype/columns summary (requires extras) |
 
 ## Development
 

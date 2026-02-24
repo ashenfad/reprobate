@@ -23,11 +23,12 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
+arrow = ["pyarrow"]
 pandas = ["pandas"]
 numpy = ["numpy"]
 polars = ["polars"]
 pydantic = ["pydantic"]
-all = ["pandas", "numpy", "polars", "pydantic"]
+all = ["pyarrow", "pandas", "numpy", "polars", "pydantic"]
 dev = [
     "ruff",
     "pre-commit",
@@ -40,6 +41,7 @@ test = [
     "numpy",
     "pandas",
     "polars",
+    "pyarrow",
     "pydantic",
 ]
 

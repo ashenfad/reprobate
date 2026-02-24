@@ -13,6 +13,7 @@ __all__ = [
 
 # Auto-register optional type renderers when their deps are available.
 from . import (
+    ext_arrow,  # noqa: F401
     ext_numpy,  # noqa: F401
     ext_pandas,  # noqa: F401
     ext_polars,  # noqa: F401
