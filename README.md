@@ -17,15 +17,10 @@ Renders any Python object into a string that fits within a character budget. Nes
 ## Install
 
 ```bash
-pip install reprobate              # core, zero dependencies
-pip install reprobate[arrow]       # adds PyArrow Table/Array renderers
-pip install reprobate[numpy]       # adds ndarray renderer
-pip install reprobate[pandas]      # adds DataFrame/Series renderers
-pip install reprobate[pil]         # adds PIL Image renderer
-pip install reprobate[polars]      # adds polars DataFrame/Series renderers
-pip install reprobate[pydantic]    # adds BaseModel renderer
-pip install reprobate[all]         # all optional renderers
+pip install reprobate
 ```
+
+Zero dependencies. Optional renderers activate automatically when their libraries are already installed (numpy, pandas, polars, pyarrow, Pillow, pydantic).
 
 ## Quick example
 
@@ -111,7 +106,7 @@ def render_my_model(obj: MyModel, budget: int) -> str:
 | Collections | `deque`, `defaultdict`, `Counter` | Type-aware wrappers (factory name, most-common order) |
 | Structured | `dataclass`, `namedtuple` | Field-aware decomposition, respects `repr=False` |
 | Objects | anything with `__dict__` | Attribute decomposition, public attrs only |
-| Optional | `Table`, `Array`, `ChunkedArray`, `ndarray`, `DataFrame`, `Series`, `Image`, `BaseModel` | Shape/dtype/columns summary (requires extras) |
+| Optional | `Table`, `Array`, `ChunkedArray`, `ndarray`, `DataFrame`, `Series`, `Image`, `BaseModel` | Shape/dtype/columns summary (auto-activates when lib is installed) |
 
 ## Development
 
