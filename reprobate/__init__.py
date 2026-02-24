@@ -16,6 +16,7 @@ from . import (
     ext_arrow,  # noqa: F401
     ext_numpy,  # noqa: F401
     ext_pandas,  # noqa: F401
+    ext_pil,  # noqa: F401
     ext_polars,  # noqa: F401
     ext_pydantic,  # noqa: F401
 )
