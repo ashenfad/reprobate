@@ -63,7 +63,7 @@ if pl is not None:
 
         dtype = str(obj.dtype)
         n = len(obj)
-        name_part = f", name={obj.name!r}" if obj.name else ""
+        name_part = f", name={obj.name!r}" if obj.name is not None else ""
         header = f"Series({n}, {dtype}{name_part})"
 
         return header[:budget]
