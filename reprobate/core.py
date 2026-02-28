@@ -138,6 +138,8 @@ def _render_primitive(obj: object, budget: int) -> str:
     r = repr(obj)
     if len(r) <= budget:
         return r
+    if budget <= 1:
+        return r[:budget]
     return r[: budget - 1] + "\u2026"
 
 
@@ -159,8 +161,11 @@ def _render_bytes(obj: bytes, budget: int) -> str:
         return r
     if budget < 6:
         return r[:budget]
-    inner = budget - 5  # b' + chars + ... + '
-    return f"b'{obj[:inner].decode('ascii', errors='replace')}...'"
+    # Slice from repr to preserve escape sequences (e.g. \xff, \n)
+    # r looks like b'...' — take the interior and truncate
+    inner = r[2:-1]  # strip b' and '
+    avail = budget - 5  # b' + chars + ... + '
+    return f"b'{inner[:avail]}...'"
 
 
 def _render_dict(obj: dict, budget: int) -> str:
@@ -311,11 +316,15 @@ def render_attrs(attrs: dict[str, object], type_name: str, budget: int) -> str:
     n = len(attrs)
 
     if not attrs:
-        return tag[:budget]
+        if budget >= len(tag):
+            return tag
+        return f"<{type_name[:budget - 3]}\u2026>" if budget >= 4 else tag[:budget]
 
     shell = f"{type_name}()"
     if budget <= len(shell):
-        return tag[:budget]
+        if budget >= len(tag):
+            return tag
+        return f"<{type_name[:budget - 3]}\u2026>" if budget >= 4 else tag[:budget]
 
     remaining = budget - len(type_name) - 2  # Name( and )
     parts: list[str] = []
