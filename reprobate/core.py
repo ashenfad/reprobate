@@ -63,12 +63,27 @@ def render_child(obj: object, budget: int) -> str:
     # Primitives (None, bool, int, float, str, bytes) are immutable
     # and can't form cycles, so we skip them.
     if not isinstance(obj, (type(None), bool, int, float, str, bytes)):
-        seen = _seen.get()
+        try:
+            seen = _seen.get()
+        except LookupError:
+            raise RuntimeError(
+                "render_child() must be called within render(). "
+                "Use render() as the top-level entry point."
+            ) from None
         obj_id = id(obj)
         if obj_id in seen:
             return CIRCULAR[:budget]
         seen.add(obj_id)
+        try:
+            return _render_inner(obj, budget)
+        finally:
+            seen.discard(obj_id)
 
+    return _render_inner(obj, budget)
+
+
+def _render_inner(obj: object, budget: int) -> str:
+    """Dispatch to protocol, registry, or generic fallback."""
     # 1. Protocol method
     method = getattr(type(obj), PROTOCOL_METHOD, None)
     if method is not None:
