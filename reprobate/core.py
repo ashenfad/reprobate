@@ -164,7 +164,7 @@ def _render_bytes(obj: bytes, budget: int) -> str:
     # Slice from repr to preserve escape sequences (e.g. \xff, \n)
     # r looks like b'...' — take the interior and truncate
     inner = r[2:-1]  # strip b' and '
-    avail = budget - 5  # b' + chars + ... + '
+    avail = budget - 6  # b'  ...  '  →  2 + 3 + 1 = 6
     return f"b'{inner[:avail]}...'"
 
 
@@ -318,13 +318,13 @@ def render_attrs(attrs: dict[str, object], type_name: str, budget: int) -> str:
     if not attrs:
         if budget >= len(tag):
             return tag
-        return f"<{type_name[:budget - 3]}\u2026>" if budget >= 4 else tag[:budget]
+        return f"<{type_name[: budget - 3]}\u2026>" if budget >= 4 else tag[:budget]
 
     shell = f"{type_name}()"
     if budget <= len(shell):
         if budget >= len(tag):
             return tag
-        return f"<{type_name[:budget - 3]}\u2026>" if budget >= 4 else tag[:budget]
+        return f"<{type_name[: budget - 3]}\u2026>" if budget >= 4 else tag[:budget]
 
     remaining = budget - len(type_name) - 2  # Name( and )
     parts: list[str] = []
