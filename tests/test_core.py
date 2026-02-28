@@ -3,6 +3,8 @@
 import collections
 import dataclasses
 
+import pytest
+
 import reprobate
 
 
@@ -339,8 +341,7 @@ class TestCircularReferences:
         obj = [shared, shared]
         r = reprobate.render(obj, 100)
         # shared appears twice but it's not a cycle — it's a DAG
-        # However, our id-based detection will flag the second occurrence.
-        # This is a known trade-off (same as Python's repr).
+        assert "<...>" not in r
         assert len(r) <= 100
 
 
@@ -428,3 +429,7 @@ class TestRegistry:
 
         r = reprobate.render(WithProtocol(), 100)
         assert r == "proto(100)"
+
+    def test_render_child_outside_render_raises(self):
+        with pytest.raises(RuntimeError, match="must be called within render"):
+            reprobate.render_child([1, 2, 3], 100)
