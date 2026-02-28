@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **render_child outside render()**: Raises RuntimeError with clear message
 - **_render_primitive**: Fixed budget overflow for budget < 2
 - **_render_bytes**: Slices from repr instead of attempting decode
+- **_render_bytes**: Fixed off-by-one in budget calculation that caused output to exceed budget by 1 character when truncating bytes with escape sequences
 - **render_attrs**: Produces well-formed `<Type...>` instead of truncated output
 - **Polars extension**: Fixed truthiness check for series names
 

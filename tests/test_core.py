@@ -291,6 +291,8 @@ class TestBudgetRespected:
             {"key": "value", "nested": [1, 2, 3]},
             list(range(1000)),
             {str(i): i for i in range(100)},
+            b"hello world" * 20,
+            bytes(range(256)),
         ]
         for obj in objects:
             for budget in [5, 10, 20, 50, 100, 500]:
