@@ -95,6 +95,10 @@ def render_my_model(obj: MyModel, budget: int) -> str:
     return render_attrs(attrs, "MyModel", budget)
 ```
 
+## Part of the agex stack
+
+reprobate renders agent workspace objects for LLM context windows in [agex](https://github.com/ashenfad/agex), fitting complex types like DataFrames and nested structures within token budgets.
+
 ## Supported types
 
 | Category | Types | Behavior |
