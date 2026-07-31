@@ -86,6 +86,32 @@ def test_equal_but_distinct_values_do_not_collapse():
     assert render([{"a": 1}, {"a": 1}], 100) == "[{'a': 1}, {'a': 1}]"
 
 
+def test_uniformity_check_never_runs_subclass_comparisons():
+    class WeirdInt(int):
+        def __eq__(self, other):
+            raise RuntimeError("no comparisons allowed")
+
+        __ne__ = __eq__
+        __hash__ = int.__hash__
+
+    result = render([WeirdInt(1), WeirdInt(2)], 5, inference="off")
+
+    assert len(result) <= 5
+
+    shared = WeirdInt(3)
+
+    assert render([shared] * 40, 30, inference="off") == "[3] * 40"
+
+
+def test_oversized_elements_are_rejected_before_the_uniformity_scan():
+    values = [("x" * 100_000) for _ in range(50)]
+
+    result = render(values, 40)
+
+    assert "*" not in result
+    assert len(result) <= 40
+
+
 def test_uniformity_proof_is_bounded_by_the_work_allowance():
     value = [0] * 10_000
 
