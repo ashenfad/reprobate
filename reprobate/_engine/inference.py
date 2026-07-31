@@ -84,7 +84,10 @@ def _infer(
         ]
         if policy == "exact" and any(schema is None for schema in schemas):
             return SequenceSchema(kind, None)
+        missing_schema = any(schema is None for schema in schemas)
         item = _merge_schemas([schema for schema in schemas if schema is not None])
+        if missing_schema and isinstance(item, RecordSchema):
+            item = RecordSchema(item.fields, complete=False)
         return SequenceSchema(kind, item)
     finally:
         active.discard(obj_id)
@@ -175,6 +178,7 @@ def _infer_record(
     active: set[int],
 ) -> RecordSchema | None:
     fields = []
+    complete = True
     for key, value in itertools.islice(obj.items(), MAX_RECORD_FIELDS):
         value_schema = _infer(
             value,
@@ -186,9 +190,13 @@ def _infer_record(
         )
         if policy == "exact" and value_schema is None:
             return None
-        if value_schema is not None:
-            fields.append(FieldSchema(key, value_schema))
-    return RecordSchema(tuple(fields))
+        if value_schema is None:
+            complete = False
+            continue
+        if not _schema_is_complete(value_schema):
+            complete = False
+        fields.append(FieldSchema(key, value_schema))
+    return RecordSchema(tuple(fields), complete=complete)
 
 
 def _mapping_items(
@@ -261,4 +269,25 @@ def _merge_records(records: list[RecordSchema]) -> RecordSchema:
                     optional=len(matching) < len(records),
                 )
             )
-    return RecordSchema(tuple(merged))
+    return RecordSchema(
+        tuple(merged),
+        complete=all(record.complete for record in records),
+    )
+
+
+def _schema_is_complete(schema: Schema) -> bool:
+    """Whether inference produced every nested record field it inspected."""
+    if isinstance(schema, RecordSchema):
+        return schema.complete and all(
+            _schema_is_complete(field.value) for field in schema.fields
+        )
+    if isinstance(schema, SequenceSchema):
+        return schema.item is None or _schema_is_complete(schema.item)
+    if isinstance(schema, MappingSchema):
+        return all(
+            item is None or _schema_is_complete(item)
+            for item in (schema.key, schema.value)
+        )
+    if isinstance(schema, UnionSchema):
+        return all(_schema_is_complete(member) for member in schema.members)
+    return True

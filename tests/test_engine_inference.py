@@ -77,6 +77,22 @@ def test_record_sequence_summary_degrades_to_bare_schema():
     assert render(value, 60) == "<list[{'name': str, 'score': int}](50)>"
 
 
+def test_incomplete_record_schema_does_not_hide_a_cycle():
+    value = []
+    value.append({"id": 1, "parent": value})
+
+    assert render(value, 40) == "[{'id': 1, 'parent': <...>}]"
+
+
+def test_merged_record_schema_does_not_hide_a_cycle_seen_in_one_record():
+    value = [{"id": 1}]
+    value.append({"id": 2, "parent": value})
+
+    result = render(value, 100)
+
+    assert result == "[{'id': 1}, {'id': 2, 'parent': <...>}]"
+
+
 def test_standalone_fixed_record_inference_preserves_literal_keys():
     value = {
         "users": ["alice" * 30] * 200,

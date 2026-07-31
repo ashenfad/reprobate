@@ -149,6 +149,34 @@ def test_dict_subclass_keeps_its_custom_repr():
     assert render(AttrDict(a=1), 100, inference="off") == "AttrDict({'a': 1})"
 
 
+def test_large_container_subclasses_keep_compact_custom_reprs():
+    class CompactList(list):
+        def __repr__(self):
+            return f"CompactList({len(self)})"
+
+    class DerivedCompactList(CompactList):
+        pass
+
+    class CompactDict(dict):
+        def __repr__(self):
+            return f"CompactDict({len(self)})"
+
+    class CompactSet(set):
+        def __repr__(self):
+            return f"CompactSet({len(self)})"
+
+    values = [
+        CompactList(range(100)),
+        DerivedCompactList(range(100)),
+        CompactDict.fromkeys(range(100)),
+        CompactSet(range(100)),
+    ]
+
+    for value in values:
+        expected = repr(value)
+        assert render(value, len(expected), inference="off") == expected
+
+
 def test_ordered_dict_keeps_its_spelling_and_degrades_structurally():
     value = collections.OrderedDict(a=1, b=2)
 
