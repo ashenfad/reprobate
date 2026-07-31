@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Keyword-only `inference` policy with `best_effort`, `exact`, and `off` modes
-- Bounded aggregate type and record-shape inference
+- Bounded aggregate type and literal-key record-shape inference
 - Optional-field schema notation and type-aware container summaries
 
 ### Changed

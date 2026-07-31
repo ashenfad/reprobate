@@ -1,4 +1,4 @@
-"""Render-session state for the replacement engine."""
+"""Render-session state for the rendering engine."""
 
 from dataclasses import dataclass, field
 from typing import Literal
@@ -21,7 +21,7 @@ class InspectionBudget:
 
 @dataclass
 class RenderContext:
-    """State propagated through one replacement-engine render call."""
+    """State propagated through one engine render call."""
 
     policy: Policy
     inference: InferencePolicy

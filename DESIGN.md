@@ -463,6 +463,8 @@ Best-effort sample size:                 32
 Maximum semantic nodes inspected:       1,024
 Maximum schema depth:                    3
 Maximum merged record fields:            32
+Maximum cumulative record-key chars:  1,024
+Maximum runtime type-name chars:         128
 ```
 
 These are implementation defaults to validate through tests and benchmarks, not

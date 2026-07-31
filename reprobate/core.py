@@ -1,4 +1,4 @@
-"""Stable public facade for the active rendering engine."""
+"""Stable public facade for the rendering engine."""
 
 from ._engine import InferencePolicy, Policy
 from ._engine import render as _render
@@ -13,7 +13,7 @@ def render(
     *,
     inference: InferencePolicy = "best_effort",
 ) -> str:
-    """Render an object through the replacement engine."""
+    """Render an object through the rendering engine."""
     return _render(obj, budget, policy, inference=inference)
 
 
@@ -25,7 +25,7 @@ def render_child(obj: object, budget: int) -> str:
 def render_attrs(attrs: dict[str, object], type_name: str, budget: int) -> str:
     """Render object attributes through the active engine.
 
-    Outside an active render, retain the legacy helper's behavior for compatibility.
+    Outside an active render, create a standalone engine session for compatibility.
     """
     try:
         session = get_active_session()

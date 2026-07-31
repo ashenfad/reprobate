@@ -77,12 +77,20 @@ reprobate.render(values, 25, inference="exact")
 
 reprobate.render(values, 25, inference="off")
 # "[<str(150)>, ...999 more]"
+
+result = {"users": ["alice" * 30] * 200, "cursor": "abc" * 100}
+reprobate.render(result, 42)
+# "<{'users': list[str], 'cursor': str}>"
 ```
 
 `"best_effort"` is the default and uses bounded sampling for large containers.
 `"exact"` emits aggregate types only after exhaustive bounded inspection; `"off"`
 disables aggregate runtime inference. Type expressions are diagnostic hints, not
 validation guarantees.
+
+Small string-keyed mappings are treated as fixed records, so their compact schemas
+retain the association between each literal key and its value type. Larger or
+non-string-keyed mappings use `dict[key_type, value_type]` summaries instead.
 
 ## Custom renderers
 

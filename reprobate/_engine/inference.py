@@ -18,6 +18,8 @@ EXACT_ELEMENT_LIMIT = 256
 SAMPLE_SIZE = 32
 MAX_SCHEMA_DEPTH = 3
 MAX_RECORD_FIELDS = 32
+MAX_RECORD_KEY_CHARS = 1_024
+MAX_TYPE_NAME_CHARS = 128
 
 
 def infer_schema(
@@ -25,7 +27,7 @@ def infer_schema(
     policy: InferencePolicy,
     inspection: InspectionBudget,
     *,
-    record_mapping: bool = False,
+    record_mapping: bool = True,
 ) -> Schema | None:
     """Infer a schema under the selected policy and inspection budget."""
     if policy == "off":
@@ -53,7 +55,7 @@ def _infer(
         obj,
         (list, tuple, set, frozenset, dict, collections.deque),
     ):
-        return ScalarSchema(type(obj).__name__)
+        return ScalarSchema(_type_name(obj))
 
     obj_id = id(obj)
     if obj_id in active:
@@ -65,7 +67,7 @@ def _infer(
                 return _infer_record(obj, policy, inspection, depth, active)
             return _infer_mapping(obj, policy, inspection, depth, active)
 
-        kind = type(obj).__name__
+        kind = _type_name(obj)
         values, complete = _sequence_values(obj, policy)
         if policy == "exact" and not complete:
             return SequenceSchema(kind, None)
@@ -145,7 +147,14 @@ def _infer_mapping(
     value_schemas = []
     for key, value in items:
         key_schema = _infer(key, policy, inspection, depth + 1, active)
-        value_schema = _infer(value, policy, inspection, depth + 1, active)
+        value_schema = _infer(
+            value,
+            policy,
+            inspection,
+            depth + 1,
+            active,
+            record_mapping=isinstance(value, dict),
+        )
         if policy == "exact" and (key_schema is None or value_schema is None):
             return MappingSchema(None, None)
         if key_schema is not None:
@@ -167,7 +176,14 @@ def _infer_record(
 ) -> RecordSchema | None:
     fields = []
     for key, value in itertools.islice(obj.items(), MAX_RECORD_FIELDS):
-        value_schema = _infer(value, policy, inspection, depth + 1, active)
+        value_schema = _infer(
+            value,
+            policy,
+            inspection,
+            depth + 1,
+            active,
+            record_mapping=isinstance(value, dict),
+        )
         if policy == "exact" and value_schema is None:
             return None
         if value_schema is not None:
@@ -186,7 +202,16 @@ def _mapping_items(
 
 
 def _is_record_mapping(obj: dict) -> bool:
-    return len(obj) <= MAX_RECORD_FIELDS and all(isinstance(key, str) for key in obj)
+    return (
+        len(obj) <= MAX_RECORD_FIELDS
+        and all(isinstance(key, str) for key in obj)
+        and sum(len(key) for key in obj) <= MAX_RECORD_KEY_CHARS
+    )
+
+
+def _type_name(obj: object) -> str:
+    name = type(obj).__name__
+    return name if len(name) <= MAX_TYPE_NAME_CHARS else "object"
 
 
 def _merge_schemas(schemas: list[Schema]) -> Schema | None:
