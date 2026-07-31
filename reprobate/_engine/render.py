@@ -6,9 +6,12 @@ customization hooks, and schema inference are ported in later implementation sli
 """
 
 import collections
+import dataclasses
 from collections.abc import Iterable
 from typing import TypeAlias
 
+from .._session import RenderSession, activate_session
+from ..registry import get_renderer
 from .context import InferencePolicy, Policy, RenderContext
 from .inference import infer_schema
 from .schema import Schema
@@ -19,6 +22,7 @@ _Scalar: TypeAlias = None | bool | int | float
 _POLICIES = {"greedy", "even"}
 _INFERENCE_POLICIES = {"off", "exact", "best_effort"}
 _CIRCULAR = "<...>"
+_PROTOCOL_METHOD = "__budget_repr__"
 
 
 class _CannotRenderFull(Exception):
@@ -47,7 +51,16 @@ def render(
         return ""
 
     context = RenderContext(policy=policy, inference=inference)
-    result = _render_value(obj, budget, context)
+    session = RenderSession(
+        render_child=lambda child, child_budget: _render_value(
+            child, child_budget, context
+        ),
+        render_attrs=lambda attrs, type_name, attrs_budget: _render_record(
+            attrs, type_name, attrs_budget, context
+        ),
+    )
+    with activate_session(session):
+        result = _render_value(obj, budget, context)
     if len(result) > budget:
         raise AssertionError(f"replacement engine exceeded budget {budget}: {result!r}")
     return result
@@ -56,6 +69,13 @@ def render(
 def _render_value(obj: object, budget: int, context: RenderContext) -> str:
     if budget <= 0:
         return ""
+
+    custom = _custom_renderer(obj)
+    if custom is not None:
+        return _render_custom(obj, budget, context, custom)
+
+    if isinstance(obj, tuple) and hasattr(type(obj), "_fields"):
+        return _render_namedtuple(obj, budget, context)
 
     full = _try_full(obj, budget)
     if full is not None:
@@ -79,7 +99,25 @@ def _render_value(obj: object, budget: int, context: RenderContext) -> str:
         return _render_sequence(obj, budget, context)
     if isinstance(obj, (set, frozenset)):
         return _render_set(obj, budget, context)
-    return _fit(f"<{type(obj).__name__}>", budget)
+    return _render_object(obj, budget, context)
+
+
+def _custom_renderer(obj: object):
+    method = getattr(type(obj), _PROTOCOL_METHOD, None)
+    if method is not None:
+        return lambda value, budget: method(value, budget)
+    return get_renderer(type(obj))
+
+
+def _render_custom(obj: object, budget: int, context: RenderContext, renderer) -> str:
+    obj_id = id(obj)
+    if obj_id in context.seen:
+        return _fit(_CIRCULAR, budget)
+    context.seen.add(obj_id)
+    try:
+        return renderer(obj, budget)[:budget]
+    finally:
+        context.seen.discard(obj_id)
 
 
 def _is_scalar(obj: object) -> bool:
@@ -196,12 +234,17 @@ def _render_sequence(
             if inferred is not None and len(inferred) <= budget:
                 return inferred
 
+        baseline = list(rendered)
         rendered = _refine_values(
             values,
             rendered,
             budget - _sequence_cost(rendered, omitted, isinstance(obj, tuple)),
             context,
         )
+        if rendered == baseline:
+            inferred = _inferred_summary(obj, context)
+            if inferred is not None and len(inferred) <= budget:
+                return inferred
         parts = rendered + ([f"...{omitted} more"] if omitted else [])
         body = ", ".join(parts)
         if isinstance(obj, tuple) and len(obj) == 1 and omitted == 0:
@@ -369,6 +412,123 @@ def _render_defaultdict(
         if len(candidate) <= budget:
             return candidate
     return _fit_summary(f"<defaultdict({len(obj)})>", budget)
+
+
+def _render_namedtuple(obj: tuple, budget: int, context: RenderContext) -> str:
+    attrs = dict(zip(type(obj)._fields, obj))
+    return _render_tracked_record(obj, attrs, type(obj).__name__, budget, context)
+
+
+def _render_object(obj: object, budget: int, context: RenderContext) -> str:
+    type_name = type(obj).__name__
+
+    if not dataclasses.is_dataclass(obj):
+        try:
+            native = repr(obj)
+        except Exception:
+            native = None
+        if native is not None:
+            is_default = native.startswith("<") and " object at 0x" in native
+            if not is_default and len(native) <= budget:
+                return native
+
+    attrs = _object_attrs(obj)
+    return _render_tracked_record(obj, attrs, type_name, budget, context)
+
+
+def _object_attrs(obj: object) -> dict[str, object]:
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return {
+            field.name: getattr(obj, field.name)
+            for field in dataclasses.fields(obj)
+            if field.repr
+        }
+    if hasattr(obj, "__dict__"):
+        return {
+            key: value for key, value in vars(obj).items() if not key.startswith("_")
+        }
+
+    attrs: dict[str, object] = {}
+    for cls in reversed(type(obj).__mro__):
+        slots = vars(cls).get("__slots__", ())
+        if isinstance(slots, str):
+            slots = (slots,)
+        for slot in slots:
+            if (
+                slot not in {"__dict__", "__weakref__"}
+                and not slot.startswith("_")
+                and hasattr(obj, slot)
+            ):
+                attrs[slot] = getattr(obj, slot)
+    return attrs
+
+
+def _render_tracked_record(
+    obj: object,
+    attrs: dict[str, object],
+    type_name: str,
+    budget: int,
+    context: RenderContext,
+) -> str:
+    obj_id = id(obj)
+    if obj_id in context.seen:
+        return _fit(_CIRCULAR, budget)
+    context.seen.add(obj_id)
+    try:
+        return _render_record(attrs, type_name, budget, context)
+    finally:
+        context.seen.discard(obj_id)
+
+
+def _render_record(
+    attrs: dict[str, object],
+    type_name: str,
+    budget: int,
+    context: RenderContext,
+) -> str:
+    tag = f"<{type_name}>"
+    if not attrs:
+        return _fit_summary(tag, budget)
+
+    values: list[object] = []
+    names: list[str] = []
+    rendered: list[str] = []
+    items = list(attrs.items())
+    shell_cost = len(type_name) + 2
+
+    for index, (name, value) in enumerate(items):
+        value_rendered = _minimum(value)
+        trial = rendered + [f"{name}={value_rendered}"]
+        omitted = len(items) - index - 1
+        if _record_cost(trial, omitted, shell_cost) > budget:
+            break
+        names.append(name)
+        values.append(value)
+        rendered.append(f"{name}={value_rendered}")
+
+    omitted = len(items) - len(rendered)
+    if not rendered:
+        return _fit_summary(tag, budget)
+
+    value_renderings = [part[len(name) + 1 :] for name, part in zip(names, rendered)]
+    value_renderings = _refine_values(
+        values,
+        value_renderings,
+        budget - _record_cost(rendered, omitted, shell_cost),
+        context,
+    )
+    rendered = [
+        f"{name}={value_rendered}"
+        for name, value_rendered in zip(names, value_renderings)
+    ]
+    parts = rendered + ([f"...{omitted} more"] if omitted else [])
+    result = f"{type_name}(" + ", ".join(parts) + ")"
+    return result if len(result) <= budget else _fit_summary(tag, budget)
+
+
+def _record_cost(rendered: list[str], omitted: int, shell_cost: int) -> int:
+    parts = rendered + ([f"...{omitted} more"] if omitted else [])
+    return shell_cost + sum(map(len, parts)) + max(0, len(parts) - 1) * 2
 
 
 def _refine_values(
