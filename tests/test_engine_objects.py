@@ -133,6 +133,40 @@ def test_custom_renderer_line_breaks_are_escaped():
     assert render(Multiline(), 100) == "first\\nsecond"
 
 
+def test_native_repr_line_breaks_are_escaped():
+    class Multiline:
+        def __repr__(self):
+            return "Multi(\nline)"
+
+    assert render(Multiline(), 100, inference="off") == "Multi(\\nline)"
+
+
+def test_dict_subclass_keeps_its_custom_repr():
+    class AttrDict(dict):
+        def __repr__(self):
+            return f"AttrDict({dict.__repr__(self)})"
+
+    assert render(AttrDict(a=1), 100, inference="off") == "AttrDict({'a': 1})"
+
+
+def test_ordered_dict_keeps_its_spelling_and_degrades_structurally():
+    value = collections.OrderedDict(a=1, b=2)
+
+    assert render(value, 100, inference="off") == repr(value)
+
+    big = collections.OrderedDict((f"key_{index}", index) for index in range(100))
+    result = render(big, 40, inference="off")
+
+    assert "'key_0': 0" in result
+    assert len(result) <= 40
+
+
+def test_namedtuple_child_keeps_field_names_inside_containers():
+    Point = collections.namedtuple("Point", ["x", "y"])
+
+    assert render([Point(1, 2)], 100, inference="off") == "[Point(x=1, y=2)]"
+
+
 def test_every_dataclass_budget_is_respected():
     @dataclasses.dataclass
     class Payload:
