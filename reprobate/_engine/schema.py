@@ -65,4 +65,6 @@ class RecordSchema(Schema):
         for field in self.fields:
             optional = "?" if field.optional else ""
             parts.append(f"{field.key!r}{optional}: {field.value.format()}")
+        if not self.complete:
+            parts.append("...")
         return "{" + ", ".join(parts) + "}"

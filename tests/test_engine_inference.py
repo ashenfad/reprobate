@@ -2,7 +2,7 @@
 
 from reprobate._engine import render
 from reprobate._engine.context import InspectionBudget
-from reprobate._engine.inference import infer_schema
+from reprobate._engine.inference import MAX_RECORD_FIELDS, infer_schema
 
 
 def test_inference_off_uses_untyped_collection_summary():
@@ -91,6 +91,23 @@ def test_merged_record_schema_does_not_hide_a_cycle_seen_in_one_record():
     result = render(value, 100)
 
     assert result == "[{'id': 1}, {'id': 2, 'parent': <...>}]"
+
+
+def test_collapsed_incomplete_record_schema_marks_missing_fields():
+    value = {"id": 1}
+    value["parent"] = value
+
+    assert render(value, 18) == "<{'id': int, ...}>"
+
+
+def test_merged_record_schema_marks_fields_dropped_by_the_key_cap():
+    value = [{f"key_{index}": index} for index in range(MAX_RECORD_FIELDS + 8)]
+
+    schema = infer_schema(value, "best_effort", InspectionBudget())
+
+    assert schema is not None
+    assert not schema.item.complete
+    assert schema.format().endswith(", ...}]")
 
 
 def test_standalone_fixed_record_inference_preserves_literal_keys():
