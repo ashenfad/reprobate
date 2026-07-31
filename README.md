@@ -62,6 +62,11 @@ reprobate.render(agent, 100, policy="even")
 # "Agent(desc='A ver...', important_note='critic...', status='running', config=None, history=None)"
 ```
 
+`"even"` uses max-min allocation among visible siblings. A bounded planning probe
+identifies children whose complete representation needs less than their initial
+share, then redistributes the unused characters among siblings that can still
+improve. Opaque custom renderers are not called speculatively.
+
 ## Inference
 
 Aggregate type hints are controlled independently from budget allocation:
