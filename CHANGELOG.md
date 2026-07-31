@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Uniform sequences collapse to the lossless product form `[0.0] * 97` (also tuples and deques), bounded by the work allowance
+
+### Changed
+- Sequences now prefer whichever form shows more complete values: sampled schema summaries replace low-density stub parades such as `['2026-...', <str(16)>, <str(16)>, ...]`, while plain renderings keep winning ties
+
 ## [0.1.2] - 2026-07-31
 
 ### Added
