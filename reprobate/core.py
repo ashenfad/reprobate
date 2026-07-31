@@ -1,20 +1,20 @@
 """Stable public facade for the active rendering engine."""
 
-from . import _legacy
-from ._session import RenderSession, activate_session, get_active_session
-
-Policy = _legacy.Policy
-
-_LEGACY_SESSION = RenderSession(
-    render_child=_legacy.render_child,
-    render_attrs=_legacy.render_attrs,
-)
+from ._engine import InferencePolicy, Policy
+from ._engine import render as _render
+from ._engine import render_attrs as _render_attrs
+from ._session import get_active_session
 
 
-def render(obj: object, budget: int = 200, policy: Policy = "greedy") -> str:
-    """Render an object through the active legacy-compatible engine."""
-    with activate_session(_LEGACY_SESSION):
-        return _legacy.render(obj, budget, policy)
+def render(
+    obj: object,
+    budget: int = 200,
+    policy: Policy = "greedy",
+    *,
+    inference: InferencePolicy = "best_effort",
+) -> str:
+    """Render an object through the replacement engine."""
+    return _render(obj, budget, policy, inference=inference)
 
 
 def render_child(obj: object, budget: int) -> str:
@@ -30,5 +30,5 @@ def render_attrs(attrs: dict[str, object], type_name: str, budget: int) -> str:
     try:
         session = get_active_session()
     except RuntimeError:
-        return _legacy.render_attrs(attrs, type_name, budget)
+        return _render_attrs(attrs, type_name, budget)
     return session.render_attrs(attrs, type_name, budget)

@@ -4,14 +4,14 @@ import pytest
 
 pl = pytest.importorskip("polars")
 
-import reprobate
+import reprobate  # noqa: E402
 
 
 class TestDataFrame:
     def test_small_uses_native_repr(self):
         df = pl.DataFrame({"a": [1, 2], "b": [3, 4]})
         r = reprobate.render(df, 200)
-        assert r == repr(df)
+        assert r == repr(df).replace("\n", "\\n")
 
     def test_compact_fallback(self):
         df = pl.DataFrame({"a": [1, 2], "b": [3, 4]})

@@ -36,11 +36,7 @@ def render(
     *,
     inference: InferencePolicy = "best_effort",
 ) -> str:
-    """Render through the private replacement engine.
-
-    The public package continues to use the legacy engine until this implementation
-    reaches feature parity.
-    """
+    """Render through the replacement engine used by the public facade."""
     if budget < 0:
         raise ValueError("budget must be nonnegative")
     if policy not in _POLICIES:
@@ -64,6 +60,37 @@ def render(
     if len(result) > budget:
         raise AssertionError(f"replacement engine exceeded budget {budget}: {result!r}")
     return result
+
+
+def render_attrs(
+    attrs: dict[str, object],
+    type_name: str,
+    budget: int,
+    *,
+    policy: Policy = "greedy",
+    inference: InferencePolicy = "best_effort",
+) -> str:
+    """Render a standalone record through the replacement engine."""
+    if budget < 0:
+        raise ValueError("budget must be nonnegative")
+    if policy not in _POLICIES:
+        raise ValueError(f"unknown rendering policy: {policy!r}")
+    if inference not in _INFERENCE_POLICIES:
+        raise ValueError(f"unknown inference policy: {inference!r}")
+    if budget == 0:
+        return ""
+
+    context = RenderContext(policy=policy, inference=inference)
+    session = RenderSession(
+        render_child=lambda child, child_budget: _render_value(
+            child, child_budget, context
+        ),
+        render_attrs=lambda child_attrs, child_type, child_budget: _render_record(
+            child_attrs, child_type, child_budget, context
+        ),
+    )
+    with activate_session(session):
+        return _render_record(attrs, type_name, budget, context)
 
 
 def _render_value(obj: object, budget: int, context: RenderContext) -> str:
@@ -115,29 +142,16 @@ def _render_custom(obj: object, budget: int, context: RenderContext, renderer) -
         return _fit(_CIRCULAR, budget)
     context.seen.add(obj_id)
     try:
-        return renderer(obj, budget)[:budget]
+        rendered = renderer(obj, budget)
+        rendered = rendered.replace("\r\n", "\\n").replace("\r", "\\r")
+        rendered = rendered.replace("\n", "\\n")
+        return rendered[:budget]
     finally:
         context.seen.discard(obj_id)
 
 
 def _is_scalar(obj: object) -> bool:
     return obj is None or isinstance(obj, (bool, int, float))
-
-
-def _is_container(obj: object) -> bool:
-    return isinstance(
-        obj,
-        (
-            list,
-            tuple,
-            dict,
-            set,
-            frozenset,
-            collections.deque,
-            collections.Counter,
-            collections.defaultdict,
-        ),
-    )
 
 
 def _render_scalar(obj: _Scalar, budget: int) -> str:
@@ -194,6 +208,8 @@ def _render_sequence(
     obj: list[object] | tuple[object, ...] | collections.deque,
     budget: int,
     context: RenderContext,
+    *,
+    allow_inference: bool = True,
 ) -> str:
     obj_id = id(obj)
     if obj_id in context.seen:
@@ -218,7 +234,7 @@ def _render_sequence(
 
         omitted = len(obj) - len(rendered)
         if not rendered:
-            inferred = _inferred_summary(obj, context)
+            inferred = _inferred_summary(obj, context) if allow_inference else None
             if inferred is not None and len(inferred) <= budget:
                 return inferred
             count_summary = f"{open_bracket}...{len(obj)} items{close_bracket}"
@@ -229,11 +245,6 @@ def _render_sequence(
                 return type_summary
             return _fit("...", budget)
 
-        if all(_is_container(value) for value in values):
-            inferred = _inferred_summary(obj, context)
-            if inferred is not None and len(inferred) <= budget:
-                return inferred
-
         baseline = list(rendered)
         rendered = _refine_values(
             values,
@@ -241,9 +252,17 @@ def _render_sequence(
             budget - _sequence_cost(rendered, omitted, isinstance(obj, tuple)),
             context,
         )
-        if rendered == baseline:
+        baseline_has_real_value = any(
+            _try_full(value, len(value_rendered)) == value_rendered
+            for value, value_rendered in zip(values, baseline)
+        )
+        if allow_inference and rendered == baseline and not baseline_has_real_value:
             inferred = _inferred_summary(obj, context)
             if inferred is not None and len(inferred) <= budget:
+                return inferred
+        if allow_inference and not any(_CIRCULAR in value for value in rendered):
+            inferred = _inferred_summary(obj, context)
+            if inferred is not None and "[{'" in inferred and len(inferred) <= budget:
                 return inferred
         parts = rendered + ([f"...{omitted} more"] if omitted else [])
         body = ", ".join(parts)
@@ -377,7 +396,7 @@ def _render_deque(obj: collections.deque, budget: int, context: RenderContext) -
     suffix = f", maxlen={obj.maxlen})" if obj.maxlen is not None else ")"
     inner_budget = budget - len("deque(") - len(suffix)
     if inner_budget >= 3:
-        inner = _render_sequence(obj, inner_budget, context)
+        inner = _render_sequence(obj, inner_budget, context, allow_inference=False)
         candidate = "deque(" + inner + suffix
         if len(candidate) <= budget:
             return candidate
@@ -674,6 +693,9 @@ def _write_full(obj: object, writer: BoundedWriter, seen: set[int]) -> None:
             return
 
         if isinstance(obj, collections.Counter):
+            if not obj:
+                writer.write("Counter()")
+                return
             # Avoid sorting a large counter merely to discover that it cannot fit.
             if len(obj) * 3 > writer.remaining:
                 raise BudgetExceeded
@@ -687,6 +709,9 @@ def _write_full(obj: object, writer: BoundedWriter, seen: set[int]) -> None:
             return
 
         if isinstance(obj, collections.deque):
+            if not obj and obj.maxlen is None:
+                writer.write("deque()")
+                return
             writer.write("deque(")
             _write_sequence_items(obj, "[", "]", writer, seen)
             if obj.maxlen is not None:

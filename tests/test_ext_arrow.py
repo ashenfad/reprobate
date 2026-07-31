@@ -4,14 +4,14 @@ import pytest
 
 pa = pytest.importorskip("pyarrow")
 
-import reprobate
+import reprobate  # noqa: E402
 
 
 class TestTable:
     def test_small_uses_native_repr(self):
         table = pa.table({"a": [1, 2], "b": [3, 4]})
         r = reprobate.render(table, 500)
-        assert r == repr(table)
+        assert r == repr(table).replace("\n", "\\n")
 
     def test_compact_fallback(self):
         table = pa.table({f"col_{i}": range(100) for i in range(10)})
@@ -56,7 +56,7 @@ class TestChunkedArray:
     def test_small_uses_native_repr(self):
         chunked = pa.chunked_array([[1, 2], [3, 4]])
         r = reprobate.render(chunked, 500)
-        assert r == repr(chunked)
+        assert r == repr(chunked).replace("\n", "\\n")
 
     def test_compact_fallback(self):
         chunked = pa.chunked_array([list(range(1000))])
