@@ -5,6 +5,8 @@ escaped strings and bytes, sequences, and mappings. Additional Python object typ
 customization hooks, and schema inference are ported in later implementation slices.
 """
 
+import collections
+from collections.abc import Iterable
 from typing import TypeAlias
 
 from .context import InferencePolicy, Policy, RenderContext
@@ -63,10 +65,18 @@ def _render_value(obj: object, budget: int, context: RenderContext) -> str:
         return _render_text(obj, budget, "str")
     if isinstance(obj, bytes):
         return _render_text(obj, budget, "bytes")
+    if isinstance(obj, collections.defaultdict):
+        return _render_defaultdict(obj, budget, context)
+    if isinstance(obj, collections.Counter):
+        return _render_counter(obj, budget, context)
     if isinstance(obj, dict):
         return _render_mapping(obj, budget, context)
+    if isinstance(obj, collections.deque):
+        return _render_deque(obj, budget, context)
     if isinstance(obj, (list, tuple)):
         return _render_sequence(obj, budget, context)
+    if isinstance(obj, (set, frozenset)):
+        return _render_set(obj, budget, context)
     return _fit(f"<{type(obj).__name__}>", budget)
 
 
@@ -75,9 +85,9 @@ def _is_scalar(obj: object) -> bool:
 
 
 def _render_scalar(obj: _Scalar, budget: int) -> str:
-    full = repr(obj)
+    full = _bounded_scalar_repr(obj, budget)
     stub = f"<{type(obj).__name__}>" if obj is not None else "<None>"
-    if len(full) <= budget:
+    if full is not None:
         return full
     if len(stub) <= budget:
         return stub
@@ -119,13 +129,13 @@ def _literal_preview(obj: str | bytes, budget: int) -> str:
         literal = repr(obj[:size])
         candidate = literal[:-1] + "..." + literal[-1]
         if len(candidate) > budget:
-            break
+            continue
         best = candidate
     return best
 
 
 def _render_sequence(
-    obj: list[object] | tuple[object, ...],
+    obj: list[object] | tuple[object, ...] | collections.deque,
     budget: int,
     context: RenderContext,
 ) -> str:
@@ -232,6 +242,103 @@ def _mapping_cost(rendered: list[str], omitted: int) -> int:
     return 2 + sum(map(len, parts)) + max(0, len(parts) - 1) * 2
 
 
+def _render_set(
+    obj: set[object] | frozenset[object],
+    budget: int,
+    context: RenderContext,
+) -> str:
+    obj_id = id(obj)
+    if obj_id in context.seen:
+        return _fit(_CIRCULAR, budget)
+
+    context.seen.add(obj_id)
+    try:
+        frozen = isinstance(obj, frozenset)
+        prefix = "frozenset(" if frozen else ""
+        suffix = ")" if frozen else ""
+        open_bracket = prefix + "{"
+        close_bracket = "}" + suffix
+        values: list[object] = []
+        rendered: list[str] = []
+
+        for index, value in enumerate(obj):
+            candidate = _minimum(value)
+            trial_values = rendered + [candidate]
+            omitted = len(obj) - index - 1
+            if _set_cost(trial_values, omitted, frozen) > budget:
+                break
+            values.append(value)
+            rendered.append(candidate)
+
+        omitted = len(obj) - len(rendered)
+        if not rendered:
+            count_summary = f"{open_bracket}...{len(obj)} items{close_bracket}"
+            if len(count_summary) <= budget:
+                return count_summary
+            type_summary = f"<{type(obj).__name__}({len(obj)})>"
+            if len(type_summary) <= budget:
+                return type_summary
+            return _fit("...", budget)
+
+        rendered = _refine_values(
+            values,
+            rendered,
+            budget - _set_cost(rendered, omitted, frozen),
+            context,
+        )
+        parts = rendered + ([f"...{omitted} more"] if omitted else [])
+        return open_bracket + ", ".join(parts) + close_bracket
+    finally:
+        context.seen.discard(obj_id)
+
+
+def _set_cost(rendered: list[str], omitted: int, frozen: bool) -> int:
+    parts = rendered + ([f"...{omitted} more"] if omitted else [])
+    shell_cost = len("frozenset({})") if frozen else 2
+    return shell_cost + sum(map(len, parts)) + max(0, len(parts) - 1) * 2
+
+
+def _render_deque(obj: collections.deque, budget: int, context: RenderContext) -> str:
+    suffix = f", maxlen={obj.maxlen})" if obj.maxlen is not None else ")"
+    inner_budget = budget - len("deque(") - len(suffix)
+    if inner_budget >= 3:
+        inner = _render_sequence(obj, inner_budget, context)
+        candidate = "deque(" + inner + suffix
+        if len(candidate) <= budget:
+            return candidate
+    return _fit_summary(f"<deque({len(obj)})>", budget)
+
+
+def _render_counter(
+    obj: collections.Counter, budget: int, context: RenderContext
+) -> str:
+    if len(obj) > 256:
+        return _fit_summary(f"<Counter({len(obj)})>", budget)
+
+    ordered = dict(obj.most_common())
+    inner_budget = budget - len("Counter(") - 1
+    if inner_budget >= 3:
+        inner = _render_mapping(ordered, inner_budget, context)
+        candidate = f"Counter({inner})"
+        if len(candidate) <= budget:
+            return candidate
+    return _fit_summary(f"<Counter({len(obj)})>", budget)
+
+
+def _render_defaultdict(
+    obj: collections.defaultdict, budget: int, context: RenderContext
+) -> str:
+    factory_name = _factory_name(obj.default_factory)
+    prefix = f"defaultdict({factory_name}, "
+    inner_budget = budget - len(prefix) - 1
+    if inner_budget >= 3:
+        inner = _render_mapping(obj, inner_budget, context)
+        candidate = prefix + inner + ")"
+        if len(candidate) <= budget:
+            return candidate
+    return _fit_summary(f"<defaultdict({len(obj)})>", budget)
+
+
 def _refine_values(
     values: list[object],
     rendered: list[str],
@@ -246,7 +353,7 @@ def _refine_values(
         for index, value in enumerate(values):
             candidate = _render_value(value, len(result[index]) + available, context)
             growth = len(candidate) - len(result[index])
-            if growth > 0:
+            if candidate != result[index] and growth <= available:
                 result[index] = candidate
                 available -= growth
             if available <= 0:
@@ -258,7 +365,7 @@ def _refine_values(
         share = available // remaining if remaining else 0
         candidate = _render_value(value, len(result[index]) + share, context)
         growth = len(candidate) - len(result[index])
-        if growth > 0:
+        if candidate != result[index] and growth <= share:
             result[index] = candidate
             available -= growth
         remaining -= 1
@@ -278,9 +385,9 @@ def _minimum_key(obj: object) -> str:
 
 def _minimum(obj: object) -> str:
     if _is_scalar(obj):
-        full = repr(obj)
         stub = f"<{type(obj).__name__}>" if obj is not None else "<None>"
-        return full if len(full) <= len(stub) else stub
+        full = _bounded_scalar_repr(obj, len(stub))
+        return full if full is not None else stub
     if isinstance(obj, str):
         stub = f"<str({len(obj)})>"
         if len(obj) + 2 <= len(stub):
@@ -295,12 +402,22 @@ def _minimum(obj: object) -> str:
             if len(full) <= len(stub):
                 return full
         return stub
+    if isinstance(obj, collections.defaultdict):
+        return f"<defaultdict({len(obj)})>"
+    if isinstance(obj, collections.Counter):
+        return f"<Counter({len(obj)})>"
     if isinstance(obj, list):
         return f"<list({len(obj)})>"
     if isinstance(obj, tuple):
         return f"<tuple({len(obj)})>"
     if isinstance(obj, dict):
         return f"<dict({len(obj)})>"
+    if isinstance(obj, collections.deque):
+        return f"<deque({len(obj)})>"
+    if isinstance(obj, set):
+        return f"<set({len(obj)})>"
+    if isinstance(obj, frozenset):
+        return f"<frozenset({len(obj)})>"
     return f"<{type(obj).__name__}>"
 
 
@@ -330,10 +447,25 @@ def _write_full(obj: object, writer: BoundedWriter, seen: set[int]) -> None:
         return
 
     if _is_scalar(obj):
-        writer.write(repr(obj))
+        rendered = _bounded_scalar_repr(obj, writer.remaining)
+        if rendered is None:
+            raise BudgetExceeded
+        writer.write(rendered)
         return
 
-    if not isinstance(obj, (list, tuple, dict)):
+    if not isinstance(
+        obj,
+        (
+            list,
+            tuple,
+            dict,
+            set,
+            frozenset,
+            collections.deque,
+            collections.Counter,
+            collections.defaultdict,
+        ),
+    ):
         raise _CannotRenderFull
 
     obj_id = id(obj)
@@ -341,30 +473,124 @@ def _write_full(obj: object, writer: BoundedWriter, seen: set[int]) -> None:
         raise _CannotRenderFull
     seen.add(obj_id)
     try:
+        if isinstance(obj, collections.defaultdict):
+            writer.write("defaultdict(")
+            writer.write(repr(obj.default_factory))
+            writer.write(", ")
+            _write_mapping_items(obj.items(), writer, seen)
+            writer.write(")")
+            return
+
+        if isinstance(obj, collections.Counter):
+            # Avoid sorting a large counter merely to discover that it cannot fit.
+            if len(obj) * 3 > writer.remaining:
+                raise BudgetExceeded
+            writer.write("Counter(")
+            _write_mapping_items(obj.most_common(), writer, seen)
+            writer.write(")")
+            return
+
         if isinstance(obj, dict):
-            writer.write("{")
-            for index, (key, value) in enumerate(obj.items()):
-                if index:
-                    writer.write(", ")
-                _write_full(key, writer, seen)
-                writer.write(": ")
-                _write_full(value, writer, seen)
-            writer.write("}")
+            _write_mapping_items(obj.items(), writer, seen)
+            return
+
+        if isinstance(obj, collections.deque):
+            writer.write("deque(")
+            _write_sequence_items(obj, "[", "]", writer, seen)
+            if obj.maxlen is not None:
+                writer.write(f", maxlen={obj.maxlen}")
+            writer.write(")")
+            return
+
+        if isinstance(obj, (set, frozenset)):
+            if not obj:
+                writer.write("frozenset()" if isinstance(obj, frozenset) else "set()")
+                return
+            if isinstance(obj, frozenset):
+                writer.write("frozenset(")
+            _write_sequence_items(obj, "{", "}", writer, seen)
+            if isinstance(obj, frozenset):
+                writer.write(")")
             return
 
         open_bracket, close_bracket = (
             ("(", ")") if isinstance(obj, tuple) else ("[", "]")
         )
-        writer.write(open_bracket)
-        for index, value in enumerate(obj):
-            if index:
-                writer.write(", ")
-            _write_full(value, writer, seen)
-        if isinstance(obj, tuple) and len(obj) == 1:
-            writer.write(",")
-        writer.write(close_bracket)
+        _write_sequence_items(
+            obj,
+            open_bracket,
+            close_bracket,
+            writer,
+            seen,
+            trailing_comma=isinstance(obj, tuple) and len(obj) == 1,
+        )
     finally:
         seen.discard(obj_id)
+
+
+def _write_mapping_items(
+    items: Iterable[tuple[object, object]],
+    writer: BoundedWriter,
+    seen: set[int],
+) -> None:
+    writer.write("{")
+    for index, (key, value) in enumerate(items):
+        if index:
+            writer.write(", ")
+        _write_full(key, writer, seen)
+        writer.write(": ")
+        _write_full(value, writer, seen)
+    writer.write("}")
+
+
+def _write_sequence_items(
+    values: Iterable[object],
+    open_bracket: str,
+    close_bracket: str,
+    writer: BoundedWriter,
+    seen: set[int],
+    *,
+    trailing_comma: bool = False,
+) -> None:
+    writer.write(open_bracket)
+    for index, value in enumerate(values):
+        if index:
+            writer.write(", ")
+        _write_full(value, writer, seen)
+    if trailing_comma:
+        writer.write(",")
+    writer.write(close_bracket)
+
+
+def _factory_name(factory: object) -> str:
+    if factory is None:
+        return "None"
+    return getattr(factory, "__name__", type(factory).__name__)
+
+
+def _bounded_scalar_repr(obj: _Scalar, budget: int) -> str | None:
+    """Return a scalar repr only when it can fit without a huge conversion."""
+    if isinstance(obj, int) and not isinstance(obj, bool):
+        bits = abs(obj).bit_length()
+        decimal_lower_bound = (
+            1 if bits == 0 else int((bits - 1) * 0.3010299956639812) + 1
+        )
+        if obj < 0:
+            decimal_lower_bound += 1
+        if decimal_lower_bound > budget:
+            return None
+
+    try:
+        rendered = repr(obj)
+    except (OverflowError, ValueError):
+        return None
+    return rendered if len(rendered) <= budget else None
+
+
+def _fit_summary(value: str, budget: int) -> str:
+    if len(value) <= budget:
+        return value
+    return _fit("...", budget)
 
 
 def _fit(value: str, budget: int) -> str:
