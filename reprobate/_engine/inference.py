@@ -271,7 +271,8 @@ def _merge_records(records: list[RecordSchema]) -> RecordSchema:
             )
     return RecordSchema(
         tuple(merged),
-        complete=all(record.complete for record in records),
+        complete=all(record.complete for record in records)
+        and len(keys) <= MAX_RECORD_FIELDS,
     )
 
 
