@@ -336,6 +336,11 @@ def _render_sequence(
     try:
         is_tuple = isinstance(obj, tuple)
         open_bracket, close_bracket = ("(", ")") if is_tuple else ("[", "]")
+
+        product = _uniform_product(obj, budget, context, is_tuple)
+        if product is not None:
+            return product
+
         values: list[object] = []
         rendered: list[str] = []
 
@@ -376,14 +381,18 @@ def _render_sequence(
             budget - _parts_cost(rendered, omitted, 2, singleton_comma=is_tuple),
             context,
         )
-        if (
-            allow_inference
-            and rendered == baseline
-            and not _has_complete_baseline(values, baseline, context)
-        ):
-            summary = _inferred_summary(obj, budget, context)
+        if allow_inference:
+            summary, sample_count = _sampled_summary(obj, budget, context)
             if summary is not None:
-                return summary
+                # Prefer the form that shows more complete values; ties keep
+                # the plain form with its previews and positional detail. A
+                # bare summary may still replace a skeleton that refinement
+                # could not improve at all.
+                plain_complete = _complete_count(values, rendered, context)
+                if sample_count > plain_complete or (
+                    plain_complete == 0 and rendered == baseline
+                ):
+                    return summary
         parts = rendered + ([f"...{omitted} more"] if omitted else [])
         body = ", ".join(parts)
         if is_tuple and len(obj) == 1 and omitted == 0:
@@ -418,6 +427,78 @@ def _has_complete_baseline(
         _try_full(value, len(rendered), context.work) == rendered
         for value, rendered in zip(values, baseline)
     )
+
+
+def _complete_count(
+    values: list[object],
+    rendered: list[str],
+    context: RenderContext,
+) -> int:
+    """Number of entries whose rendering already shows a complete value."""
+    return sum(
+        1
+        for value, value_rendered in zip(values, rendered)
+        if _try_full(value, len(value_rendered), context.work) == value_rendered
+    )
+
+
+_UNIFORM_MISSING = object()
+
+
+def _uniform_product(
+    obj: list | tuple | collections.deque,
+    budget: int,
+    context: RenderContext,
+    is_tuple: bool,
+) -> str | None:
+    """Render ``[x] * n`` when every element is provably the same value.
+
+    The product expression is lossless, so it outranks partial values and
+    schema summaries; it applies only to whole containers and never to runs.
+    Proving uniformity requires reading every element, so the scan must fit
+    inside the remaining work allowance — larger budgets unlock larger proofs.
+    """
+    if len(obj) < 2 or len(obj) > context.work.remaining:
+        return None
+    element = _uniform_element(obj, context.work)
+    if element is _UNIFORM_MISSING:
+        return None
+    rendered = _try_full(element, budget, context.work)
+    if rendered is None:
+        return None
+    if is_tuple:
+        candidate = f"({rendered},) * {len(obj)}"
+    else:
+        candidate = f"[{rendered}] * {len(obj)}"
+    return candidate if len(candidate) <= budget else None
+
+
+def _uniform_element(
+    obj: list | tuple | collections.deque,
+    work: InspectionBudget,
+) -> object:
+    """Return the shared element, or ``_UNIFORM_MISSING`` when not uniform.
+
+    Identity covers the common ``[x] * n`` construction. Distinct objects
+    must be scalars of the same type with equal values, and floats must also
+    agree on repr so ``0.0`` never stands in for ``-0.0``.
+    """
+    iterator = iter(obj)
+    first = next(iterator)
+    for value in iterator:
+        if not work.consume():
+            return _UNIFORM_MISSING
+        if value is first:
+            continue
+        if type(value) is not type(first):
+            return _UNIFORM_MISSING
+        if not isinstance(first, (bool, int, float, str, bytes)):
+            return _UNIFORM_MISSING
+        if value != first:
+            return _UNIFORM_MISSING
+        if isinstance(first, float) and repr(value) != repr(first):
+            return _UNIFORM_MISSING
+    return first
 
 
 def _collapsed_summary(
@@ -1018,24 +1099,31 @@ def _inferred_schema(obj: object, context: RenderContext) -> Schema | None:
 
 
 def _inferred_summary(obj: object, budget: int, context: RenderContext) -> str | None:
-    """Render the best schema summary that fits, with sample values if possible.
+    summary, _ = _sampled_summary(obj, budget, context)
+    return summary
+
+
+def _sampled_summary(
+    obj: object, budget: int, context: RenderContext
+) -> tuple[str | None, int]:
+    """Render the best schema summary that fits, plus its complete-sample count.
 
     Sequences prefer the sampled form ``<list[str](200): 'alice', 'bob', ...>``
     from the design's degradation ladder, then the bare ``<list[str](200)>``.
-    Mappings and records use their schema-only forms.
+    Mappings and records use their schema-only forms and carry zero samples.
     """
     schema = _inferred_schema(obj, context)
     if schema is None:
-        return None
+        return None, 0
     if isinstance(schema, RecordSchema):
         summary = f"<{schema.format()}>"
-        return summary if len(summary) <= budget else None
+        return (summary if len(summary) <= budget else None), 0
 
     bare = f"<{schema.format()}({len(obj)})>"
     if len(bare) > budget:
-        return None
+        return None, 0
     if isinstance(obj, dict) or not len(obj):
-        return bare
+        return bare, 0
 
     head = f"<{schema.format()}({len(obj)}): "
     samples: list[str] = []
@@ -1051,8 +1139,8 @@ def _inferred_summary(obj: object, budget: int, context: RenderContext) -> str |
         samples.append(sample)
         used += len(sample)
     if not samples:
-        return bare
-    return head + ", ".join(samples) + ", ...>"
+        return bare, 0
+    return head + ", ".join(samples) + ", ...>", len(samples)
 
 
 def _bounded_scalar_repr(obj: _Scalar, budget: int) -> str | None:

@@ -63,6 +63,37 @@ def test_self_referencing_mapping_uses_circular_marker():
     assert render(value, 100, inference="off") == "{'self': <...>}"
 
 
+def test_uniform_sequences_collapse_to_product_expressions():
+    assert render([0.0] * 97, 40) == "[0.0] * 97"
+    assert render(("a",) * 50, 40) == "('a',) * 50"
+    assert render(collections.deque([0.0] * 97), 40) == "deque([0.0] * 97)"
+    assert render(["N/A"] * 100, 40, inference="off") == "['N/A'] * 100"
+
+
+def test_identical_object_references_collapse_to_a_product_expression():
+    shared = {"a": 1}
+
+    assert render([shared] * 30, 40) == "[{'a': 1}] * 30"
+
+
+def test_complete_render_outranks_the_product_expression():
+    assert render([0.0] * 3, 100) == "[0.0, 0.0, 0.0]"
+
+
+def test_equal_but_distinct_values_do_not_collapse():
+    assert render([0, False] * 3, 100) == "[0, False, 0, False, 0, False]"
+    assert render([0.0, -0.0], 100) == "[0.0, -0.0]"
+    assert render([{"a": 1}, {"a": 1}], 100) == "[{'a': 1}, {'a': 1}]"
+
+
+def test_uniformity_proof_is_bounded_by_the_work_allowance():
+    value = [0] * 10_000
+
+    # A small budget must not fund a 10k-element uniformity scan.
+    assert render(value, 40) == "[0, 0, 0, 0, 0, 0, 0, 0, ...9992 more]"
+    assert render(value, 3_000) == "[0] * 10000"
+
+
 def test_self_referencing_counter_uses_circular_marker():
     value = collections.Counter()
     value["self"] = value

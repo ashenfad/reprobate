@@ -50,6 +50,29 @@ def test_record_inference_distinguishes_optional_and_nullable_fields():
     assert "'error'?: str | None" in result
 
 
+def test_sampled_summary_replaces_a_low_density_stub_parade():
+    dates = [f"2026-07-{27 + hour // 24:02d}T{hour % 24:02d}:00" for hour in range(97)]
+
+    result = render(dates, 120)
+
+    assert result.startswith("<list[str](97): '2026-07-27T00:00', '2026-07-27T01:00'")
+    assert result.endswith(", ...>")
+    assert "<str(16)>" not in result
+
+
+def test_plain_form_wins_when_it_shows_more_complete_values():
+    assert render(list(range(1000)), 40) == "[0, 1, 2, 3, 4, 5, 6, 7, 8, ...991 more]"
+
+
+def test_previews_survive_when_no_summary_sample_can_complete():
+    value = ["x" * 300, "y" * 300, "z" * 300]
+
+    result = render(value, 80)
+
+    assert "'xxxx" in result
+    assert result.startswith("[")
+
+
 def test_record_sequence_summary_includes_sample_values_when_affordable():
     value = [{"name": f"user_{index}", "score": index * 10} for index in range(50)]
 
