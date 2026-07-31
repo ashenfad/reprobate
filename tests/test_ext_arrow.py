@@ -19,6 +19,16 @@ class TestTable:
         assert "Table" in r
         assert "100x10" in r
 
+    def test_compact_fallback_includes_column_types(self):
+        table = pa.table(
+            {"user_id": range(100), "name": [f"user_{i}" for i in range(100)]}
+        )
+
+        r = reprobate.render(table, 80)
+
+        assert "'user_id': int64" in r
+        assert "'name': string" in r
+
     def test_budget_respected(self):
         table = pa.table({f"col_{i}": range(100) for i in range(10)})
         for budget in [5, 10, 20, 50, 100, 200]:
