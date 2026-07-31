@@ -5,6 +5,12 @@ try:
 except ImportError:
     pd = None
 
+from ._engine.summaries import (
+    TableColumn,
+    native_repr_if_fits,
+    render_array_summary,
+    render_table_summary,
+)
 from .core import render_child
 from .registry import register
 
@@ -12,59 +18,31 @@ if pd is not None:
 
     @register(pd.DataFrame)
     def render_dataframe(obj: "pd.DataFrame", budget: int) -> str:
-        # Let pandas repr handle it if it fits
-        try:
-            r = repr(obj)
-            if len(r) <= budget:
-                return r
-        except Exception:
-            pass
+        native = native_repr_if_fits(obj, budget)
+        if native is not None:
+            return native
 
-        rows, cols = obj.shape
-        col_names = list(obj.columns)
-        header = f"DataFrame({rows}x{cols}"
-
-        if budget <= len(header) + 1:
-            return f"DataFrame({rows}x{cols})"[:budget]
-
-        remaining = budget - len(header) - 5  # ", [" before cols, "])" at end
-        if remaining < 5:
-            return (header + ")")[:budget]
-
-        # Show column names
-        col_parts: list[str] = []
-        used = 0
-
-        for i, name in enumerate(col_names):
-            sep = 2 if col_parts else 0
-            omitted = len(col_names) - i - 1
-            reserve = len(f", ...{omitted} more") if omitted > 0 else 0
-            avail = remaining - used - sep - reserve
-
-            r = render_child(name, avail)
-            if len(r) > avail or avail < 3:
-                break
-            col_parts.append(r)
-            used += len(r) + sep
-
-        omitted = len(col_names) - len(col_parts)
-        if omitted > 0:
-            col_parts.append(f"...{omitted} more")
-
-        return header + ", [" + ", ".join(col_parts) + "])"
+        columns = tuple(
+            TableColumn(name, str(dtype))
+            for name, dtype in zip(obj.columns, obj.dtypes, strict=True)
+        )
+        return render_table_summary(
+            "DataFrame", len(obj), columns, budget, render_child
+        )
 
     @register(pd.Series)
     def render_series(obj: "pd.Series", budget: int) -> str:
-        try:
-            r = repr(obj)
-            if len(r) <= budget:
-                return r
-        except Exception:
-            pass
+        native = native_repr_if_fits(obj, budget)
+        if native is not None:
+            return native
 
-        dtype = str(obj.dtype)
-        n = len(obj)
-        name_part = f", name={obj.name!r}" if obj.name is not None else ""
-        header = f"Series({n}, {dtype}{name_part})"
-
-        return header[:budget]
+        metadata = (("name", obj.name),) if obj.name is not None else ()
+        return render_array_summary(
+            "Series",
+            len(obj),
+            str(obj.dtype),
+            len(obj),
+            budget,
+            render_child,
+            metadata=metadata,
+        )

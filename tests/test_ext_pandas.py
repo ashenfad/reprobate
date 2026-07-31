@@ -4,7 +4,7 @@ import pytest
 
 pd = pytest.importorskip("pandas")
 
-import reprobate
+import reprobate  # noqa: E402
 
 
 class TestDataFrame:
@@ -21,6 +21,19 @@ class TestDataFrame:
             assert len(r) <= budget, (
                 f"Budget {budget} exceeded: got {len(r)} chars: {r!r}"
             )
+
+    def test_compact_fallback_includes_column_dtypes(self):
+        df = pd.DataFrame(
+            {
+                "user_id": pd.Series(range(100), dtype="int64"),
+                "score": pd.Series(range(100), dtype="float64"),
+            }
+        )
+
+        r = reprobate.render(df, 80, inference="off")
+
+        assert "'user_id': int64" in r
+        assert "'score': float64" in r
 
 
 class TestSeries:

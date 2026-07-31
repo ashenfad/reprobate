@@ -13,7 +13,7 @@ Renders any Python object into a string that fits within a character budget. Nes
 - **Cycle detection** -- circular references render as `<...>` instead of stack overflows
 - **Type registry** -- `@register(MyType)` for custom budget-aware renderers
 - **Protocol method** -- `__budget_repr__(self, budget)` on any class
-- **Optional extensions** -- arrow, numpy, pandas, pil, polars, pydantic renderers (guarded imports, zero cost if absent)
+- **Optional extensions** -- typed table/array summaries for Arrow, NumPy, pandas, Polars, Pillow, and Pydantic (guarded imports, zero cost if absent)
 
 ## Install
 
@@ -135,7 +135,7 @@ reprobate renders agent workspace objects for LLM context windows in [agex](http
 | Collections | `deque`, `defaultdict`, `Counter` | Type-aware wrappers (factory name, most-common order) |
 | Structured | `dataclass`, `namedtuple` | Field-aware decomposition, respects `repr=False` |
 | Objects | anything with `__dict__` | Attribute decomposition, public attrs only |
-| Optional | numpy, pandas, polars, pyarrow, Pillow, pydantic | Shape/dtype/columns summary (auto-activates when lib is installed) |
+| Optional | numpy, pandas, polars, pyarrow, Pillow, pydantic | Shape, dtype, typed-column schema, and bounded value summaries (auto-activates when installed) |
 
 ## Development
 

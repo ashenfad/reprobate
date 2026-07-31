@@ -29,6 +29,16 @@ class TestDataFrame:
         assert "5x20" in r
         assert "more" in r
 
+    def test_compact_fallback_includes_column_dtypes(self):
+        df = pl.DataFrame(
+            {"user_id": range(100), "name": [f"user_{i}" for i in range(100)]}
+        )
+
+        r = reprobate.render(df, 80)
+
+        assert "'user_id': Int64" in r
+        assert "'name': String" in r
+
     def test_budget_respected(self):
         df = pl.DataFrame({f"col_{i}": range(100) for i in range(20)})
         for budget in [5, 10, 20, 50, 100, 200]:
