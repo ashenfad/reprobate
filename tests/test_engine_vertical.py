@@ -1,5 +1,7 @@
 """Contract tests for the private replacement-engine walking skeleton."""
 
+import ast
+
 import pytest
 
 from reprobate._engine import render
@@ -67,6 +69,25 @@ def test_large_string_uses_bounded_preview_path():
 
     assert len(result) <= 40
     assert "..." in result
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "single ' and double \" quotes" * 20,
+        b"single ' and double \" quotes" * 20,
+    ],
+)
+def test_literal_preview_remains_parseable(value):
+    result = render(value, 20, inference="off")
+
+    assert ast.literal_eval(result) is not None
+
+
+def test_huge_integer_does_not_require_an_unbounded_decimal_repr():
+    result = render(10**100_000, 20, inference="off")
+
+    assert result == "<int>"
 
 
 def test_singleton_tuple_keeps_its_comma():
