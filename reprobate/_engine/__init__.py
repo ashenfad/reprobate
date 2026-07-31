@@ -1,4 +1,4 @@
-"""Private entry point for the replacement rendering engine."""
+"""Private entry point for the rendering engine."""
 
 from .render import InferencePolicy, Policy, render, render_attrs
 

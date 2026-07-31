@@ -1,9 +1,4 @@
-"""Walking skeleton for the replacement rendering engine.
-
-This private engine intentionally starts with the JSON/tool-result path: scalars,
-escaped strings and bytes, sequences, and mappings. Additional Python object types,
-customization hooks, and schema inference are ported in later implementation slices.
-"""
+"""Budget-bounded rendering engine for Python values and object graphs."""
 
 import collections
 import dataclasses
@@ -14,7 +9,7 @@ from .._session import RenderSession, activate_session
 from ..registry import get_renderer
 from .context import InferencePolicy, Policy, RenderContext
 from .inference import infer_schema
-from .schema import Schema
+from .schema import RecordSchema, Schema
 from .writer import BoundedWriter, BudgetExceeded
 
 _Scalar: TypeAlias = None | bool | int | float
@@ -36,7 +31,7 @@ def render(
     *,
     inference: InferencePolicy = "best_effort",
 ) -> str:
-    """Render through the replacement engine used by the public facade."""
+    """Render through the engine used by the public facade."""
     if budget < 0:
         raise ValueError("budget must be nonnegative")
     if policy not in _POLICIES:
@@ -58,7 +53,7 @@ def render(
     with activate_session(session):
         result = _render_value(obj, budget, context)
     if len(result) > budget:
-        raise AssertionError(f"replacement engine exceeded budget {budget}: {result!r}")
+        raise AssertionError(f"rendering engine exceeded budget {budget}: {result!r}")
     return result
 
 
@@ -70,7 +65,7 @@ def render_attrs(
     policy: Policy = "greedy",
     inference: InferencePolicy = "best_effort",
 ) -> str:
-    """Render a standalone record through the replacement engine."""
+    """Render a standalone record through the rendering engine."""
     if budget < 0:
         raise ValueError("budget must be nonnegative")
     if policy not in _POLICIES:
@@ -316,8 +311,24 @@ def _render_mapping(obj: dict, budget: int, context: RenderContext) -> str:
             return _fit("...", budget)
 
         value_renderings = [part[len(key) + 2 :] for key, part in zip(keys, rendered)]
+        baseline = list(value_renderings)
         available = budget - _mapping_cost(rendered, omitted)
         value_renderings = _refine_values(values, value_renderings, available, context)
+        baseline_has_real_value = any(
+            _try_full(value, len(value_rendered)) == value_rendered
+            for value, value_rendered in zip(values, baseline)
+        )
+        only_summaries = all(
+            value.startswith("<") and value.endswith(">") for value in value_renderings
+        )
+        if (
+            only_summaries
+            and not baseline_has_real_value
+            and not any(_CIRCULAR in value for value in value_renderings)
+        ):
+            inferred = _inferred_summary(obj, context)
+            if inferred is not None and len(inferred) <= budget:
+                return inferred
         rendered = [
             f"{key}: {value_rendered}"
             for key, value_rendered in zip(keys, value_renderings)
@@ -796,6 +807,8 @@ def _inferred_summary(obj: object, context: RenderContext) -> str | None:
     schema = context.schema_cache[cache_key]
     if not isinstance(schema, Schema):
         return None
+    if isinstance(schema, RecordSchema):
+        return f"<{schema.format()}>"
     return f"<{schema.format()}({len(obj)})>"
 
 

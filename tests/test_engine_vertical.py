@@ -1,4 +1,4 @@
-"""Contract tests for the private replacement-engine walking skeleton."""
+"""Vertical contract tests for the private rendering engine."""
 
 import ast
 
