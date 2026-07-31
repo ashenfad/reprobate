@@ -45,6 +45,7 @@ _EXACT_STRUCTURED = {
     collections.Counter,
     collections.defaultdict,
 }
+_KNOWN_STRUCTURED_REPR_OWNERS = _EXACT_STRUCTURED | {collections.OrderedDict}
 
 
 class _CannotRenderFull(Exception):
@@ -228,13 +229,23 @@ def _faithful_structured(obj: object) -> bool:
 def _native_structured_repr(obj: object, budget: int) -> str | None:
     """Honor a container subclass repr when it is affordable, else degrade."""
     try:
-        # Each entry costs at least a few characters, so a large container
-        # cannot fit and its (potentially expensive) repr is never built.
-        if len(obj) * 3 > budget:
+        # Known container reprs spell every entry, so large values cannot fit and
+        # their potentially expensive reprs need not be built. A user override
+        # may instead return a compact summary independent of container length.
+        if not _has_custom_structured_repr(obj) and len(obj) * 3 > budget:
             return None
     except Exception:
         return None
     return _normalized_native_repr(obj, budget)
+
+
+def _has_custom_structured_repr(obj: object) -> bool:
+    """Whether the effective repr comes from a user-defined container class."""
+    owner = next(
+        (cls for cls in type(obj).__mro__ if "__repr__" in cls.__dict__),
+        object,
+    )
+    return owner not in _KNOWN_STRUCTURED_REPR_OWNERS
 
 
 def _normalized_native_repr(obj: object, budget: int) -> str | None:
@@ -346,8 +357,10 @@ def _render_sequence(
 
         if allow_inference:
             schema = _inferred_schema(obj, context)
-            if isinstance(schema, SequenceSchema) and isinstance(
-                schema.item, RecordSchema
+            if (
+                isinstance(schema, SequenceSchema)
+                and isinstance(schema.item, RecordSchema)
+                and schema.item.complete
             ):
                 # A record sequence communicates more through its shared shape
                 # plus complete sample records than through the first records

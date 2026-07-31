@@ -58,6 +58,7 @@ class FieldSchema:
 @dataclass(frozen=True)
 class RecordSchema(Schema):
     fields: tuple[FieldSchema, ...]
+    complete: bool = True
 
     def format(self) -> str:
         parts = []
