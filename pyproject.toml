@@ -1,6 +1,6 @@
 [project]
 name = "reprobate"
-version = "0.1.2"
+version = "0.1.3"
 description = "Budget-controlled repr for Python objects."
 readme = "README.md"
 license = "MIT"
