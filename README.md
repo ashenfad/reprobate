@@ -59,7 +59,7 @@ reprobate.render(agent, 100, policy="greedy")
 
 # Even: all fields get comparable detail
 reprobate.render(agent, 100, policy="even")
-# "Agent(desc='A ver...', important_note='critic...', status='running', config=None, history=None)"
+# "Agent(desc='A very l...', important_note='critical...', status='running', config=None, history=None)"
 ```
 
 `"even"` uses max-min allocation among visible siblings. A bounded planning probe
@@ -141,13 +141,13 @@ reprobate renders agent workspace objects for LLM context windows in [agex](http
 
 | Category | Types | Behavior |
 |----------|-------|----------|
-| Primitives | `None`, `bool`, `int`, `float` | `repr()`, truncated with `...` if needed |
-| Strings | `str`, `bytes` | Quoted, truncated with `...` preserving quotes |
-| Containers | `list`, `tuple`, `set`, `frozenset` | Head items + `...N more`, tail peek when budget allows |
-| Dicts | `dict` | Key-value pairs + `...N more` |
+| Primitives | `None`, `bool`, `int`, `float` | `repr()`, or a `<int>`-style stub when it cannot fit |
+| Strings | `str`, `bytes` | Quoted, escaped previews with `...`, plus length metadata when space allows: `<str(150): 'xxx...'>` |
+| Containers | `list`, `tuple`, `set`, `frozenset` | Head items + `...N more`, schema summaries when items cannot fit |
+| Dicts | `dict` | Key-value pairs + `...N more`; subclasses keep their own `repr` |
 | Collections | `deque`, `defaultdict`, `Counter` | Type-aware wrappers (factory name, most-common order) |
 | Structured | `dataclass`, `namedtuple` | Field-aware decomposition, respects `repr=False` |
-| Objects | anything with `__dict__` | Attribute decomposition, public attrs only |
+| Objects | anything with `__dict__` or `__slots__` | Attribute decomposition, public attrs only |
 | Optional | numpy, pandas, polars, pyarrow, Pillow, pydantic | Shape, dtype, typed-column schema, and bounded value summaries (auto-activates when installed) |
 
 ## Development
