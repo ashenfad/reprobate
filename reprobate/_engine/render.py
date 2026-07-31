@@ -10,6 +10,8 @@ from collections.abc import Iterable
 from typing import TypeAlias
 
 from .context import InferencePolicy, Policy, RenderContext
+from .inference import infer_schema
+from .schema import Schema
 from .writer import BoundedWriter, BudgetExceeded
 
 _Scalar: TypeAlias = None | bool | int | float
@@ -82,6 +84,22 @@ def _render_value(obj: object, budget: int, context: RenderContext) -> str:
 
 def _is_scalar(obj: object) -> bool:
     return obj is None or isinstance(obj, (bool, int, float))
+
+
+def _is_container(obj: object) -> bool:
+    return isinstance(
+        obj,
+        (
+            list,
+            tuple,
+            dict,
+            set,
+            frozenset,
+            collections.deque,
+            collections.Counter,
+            collections.defaultdict,
+        ),
+    )
 
 
 def _render_scalar(obj: _Scalar, budget: int) -> str:
@@ -162,6 +180,9 @@ def _render_sequence(
 
         omitted = len(obj) - len(rendered)
         if not rendered:
+            inferred = _inferred_summary(obj, context)
+            if inferred is not None and len(inferred) <= budget:
+                return inferred
             count_summary = f"{open_bracket}...{len(obj)} items{close_bracket}"
             if len(count_summary) <= budget:
                 return count_summary
@@ -169,6 +190,11 @@ def _render_sequence(
             if len(type_summary) <= budget:
                 return type_summary
             return _fit("...", budget)
+
+        if all(_is_container(value) for value in values):
+            inferred = _inferred_summary(obj, context)
+            if inferred is not None and len(inferred) <= budget:
+                return inferred
 
         rendered = _refine_values(
             values,
@@ -216,6 +242,9 @@ def _render_mapping(obj: dict, budget: int, context: RenderContext) -> str:
 
         omitted = len(obj) - len(rendered)
         if not rendered:
+            inferred = _inferred_summary(obj, context)
+            if inferred is not None and len(inferred) <= budget:
+                return inferred
             count_summary = f"{{...{len(obj)} items}}"
             if len(count_summary) <= budget:
                 return count_summary
@@ -272,6 +301,9 @@ def _render_set(
 
         omitted = len(obj) - len(rendered)
         if not rendered:
+            inferred = _inferred_summary(obj, context)
+            if inferred is not None and len(inferred) <= budget:
+                return inferred
             count_summary = f"{open_bracket}...{len(obj)} items{close_bracket}"
             if len(count_summary) <= budget:
                 return count_summary
@@ -566,6 +598,20 @@ def _factory_name(factory: object) -> str:
     if factory is None:
         return "None"
     return getattr(factory, "__name__", type(factory).__name__)
+
+
+def _inferred_summary(obj: object, context: RenderContext) -> str | None:
+    cache_key = (id(obj), False)
+    if cache_key not in context.schema_cache:
+        context.schema_cache[cache_key] = infer_schema(
+            obj,
+            context.inference,
+            context.inspection,
+        )
+    schema = context.schema_cache[cache_key]
+    if not isinstance(schema, Schema):
+        return None
+    return f"<{schema.format()}({len(obj)})>"
 
 
 def _bounded_scalar_repr(obj: _Scalar, budget: int) -> str | None:
