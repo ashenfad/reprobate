@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keyword-only `inference` policy with `best_effort`, `exact`, and `off` modes
 - Bounded aggregate type and literal-key record-shape inference
 - Optional-field schema notation and type-aware container summaries
+- Sampled schema summaries for sequences, such as `<list[{'id': int}](80): {'id': 0}, ...>`, so schema never displaces sample values the budget can afford
 
 ### Changed
 - Replaced the recursive budget allocator with a bounded full-probe and structural refinement engine
@@ -19,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sets preserve native iteration order instead of imposing a presentation order
 - Optional table and array renderers share bounded semantic summaries, including authoritative column types
 - Even allocation plans bounded sibling demand and redistributes unused shares
+- Native reprs of arbitrary objects are normalized to escaped single-line output
+- Container subclasses with their own repr (such as `OrderedDict`) keep that spelling instead of rendering as plain builtins, and namedtuples nested in containers keep their field names
+- Large string and bytes previews are computed with a bounded binary search instead of a quadratic scan
+- Custom renderer truncation no longer ends on a dangling escape backslash
 
 ## [0.1.1] - 2026-02-28
 

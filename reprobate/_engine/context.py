@@ -30,7 +30,9 @@ class RenderContext:
     seen: set[int] = field(default_factory=set)
     inspection: InspectionBudget = field(default_factory=InspectionBudget)
     work: InspectionBudget = field(default_factory=InspectionBudget)
-    schema_cache: dict[tuple[int, bool], object | None] = field(default_factory=dict)
+    # Entries hold (obj, schema): the object reference keeps the id from being
+    # reused by a temporary allocated later in the same render.
+    schema_cache: dict[int, tuple[object, object | None]] = field(default_factory=dict)
 
 
 def render_work_budget(budget: int) -> InspectionBudget:

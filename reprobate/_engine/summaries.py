@@ -3,6 +3,8 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from .text import single_line
+
 RenderValue = Callable[[object, int], str]
 
 
@@ -21,8 +23,7 @@ def native_repr_if_fits(obj: object, budget: int) -> str | None:
     except Exception:
         return None
 
-    rendered = rendered.replace("\r\n", "\\n").replace("\r", "\\r")
-    rendered = rendered.replace("\n", "\\n")
+    rendered = single_line(rendered)
     return rendered if len(rendered) <= budget else None
 
 
@@ -178,7 +179,7 @@ def _shape_text(shape: int | Sequence[int]) -> str:
 
 
 def _metadata_text(value: object) -> str:
-    return str(value).replace("\r\n", "\\n").replace("\r", "\\r").replace("\n", "\\n")
+    return single_line(str(value))
 
 
 def _is_informative_sample(rendered: str) -> bool:

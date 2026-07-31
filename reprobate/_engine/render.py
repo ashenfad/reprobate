@@ -16,7 +16,8 @@ from .context import (
 )
 from .inference import infer_schema
 from .planning import allocate_even
-from .schema import RecordSchema, Schema
+from .schema import RecordSchema, Schema, SequenceSchema
+from .text import single_line
 from .writer import BoundedWriter, BudgetExceeded
 
 _Scalar: TypeAlias = None | bool | int | float
@@ -25,6 +26,25 @@ _POLICIES = {"greedy", "even"}
 _INFERENCE_POLICIES = {"off", "exact", "best_effort"}
 _CIRCULAR = "<...>"
 _PROTOCOL_METHOD = "__budget_repr__"
+
+_STRUCTURED_TYPES = (
+    list,
+    tuple,
+    dict,
+    set,
+    frozenset,
+    collections.deque,
+)
+_EXACT_STRUCTURED = {
+    list,
+    tuple,
+    dict,
+    set,
+    frozenset,
+    collections.deque,
+    collections.Counter,
+    collections.defaultdict,
+}
 
 
 class _CannotRenderFull(Exception):
@@ -114,15 +134,24 @@ def _render_value(obj: object, budget: int, context: RenderContext) -> str:
     if isinstance(obj, tuple) and hasattr(type(obj), "_fields"):
         return _render_namedtuple(obj, budget, context)
 
+    if isinstance(obj, _STRUCTURED_TYPES) and not _faithful_structured(obj):
+        native = _native_structured_repr(obj, budget)
+        if native is not None:
+            return native
+
     full = _try_full(obj, budget, context.work)
     if full is not None:
         return full
 
-    if _is_scalar(obj):
-        return _render_scalar(obj, budget)
-    if isinstance(obj, str):
-        return _render_text(obj, budget, "str")
-    if isinstance(obj, bytes):
+    if _is_scalar(obj) or isinstance(obj, (str, bytes)):
+        if not _faithful_scalar(obj):
+            native = _normalized_native_repr(obj, budget)
+            if native is not None:
+                return native
+        if _is_scalar(obj):
+            return _render_scalar(obj, budget)
+        if isinstance(obj, str):
+            return _render_text(obj, budget, "str")
         return _render_text(obj, budget, "bytes")
     if isinstance(obj, collections.defaultdict):
         return _render_defaultdict(obj, budget, context)
@@ -152,16 +181,72 @@ def _render_custom(obj: object, budget: int, context: RenderContext, renderer) -
         return _fit(_CIRCULAR, budget)
     context.seen.add(obj_id)
     try:
-        rendered = renderer(obj, budget)
-        rendered = rendered.replace("\r\n", "\\n").replace("\r", "\\r")
-        rendered = rendered.replace("\n", "\\n")
-        return rendered[:budget]
+        rendered = single_line(renderer(obj, budget))
+        truncated = rendered[:budget]
+        if truncated != rendered:
+            # Do not end on a dangling backslash that would turn a two-character
+            # escape into a misleading fragment.
+            dangling = len(truncated) - len(truncated.rstrip("\\"))
+            if dangling % 2:
+                truncated = truncated[:-1]
+        return truncated
     finally:
         context.seen.discard(obj_id)
 
 
 def _is_scalar(obj: object) -> bool:
     return obj is None or isinstance(obj, (bool, int, float))
+
+
+def _faithful_scalar(obj: object) -> bool:
+    """True when the builtin scalar/text rendering matches the object's own repr."""
+    if obj is None or isinstance(obj, bool):
+        return True
+    for base in (int, float, str, bytes):
+        if isinstance(obj, base):
+            return type(obj) is base or type(obj).__repr__ is base.__repr__
+    return True
+
+
+def _faithful_structured(obj: object) -> bool:
+    """True when structural container output matches the object's own repr.
+
+    Exact builtin containers always qualify. dict/list/tuple subclasses qualify
+    while they inherit the base repr, because that repr carries no class name.
+    set, frozenset, deque, Counter, and defaultdict reprs embed the class name,
+    so their subclasses must degrade through their own repr instead.
+    """
+    cls = type(obj)
+    if cls in _EXACT_STRUCTURED:
+        return True
+    for base in (dict, list, tuple):
+        if isinstance(obj, base):
+            return cls.__repr__ is base.__repr__
+    return False
+
+
+def _native_structured_repr(obj: object, budget: int) -> str | None:
+    """Honor a container subclass repr when it is affordable, else degrade."""
+    try:
+        # Each entry costs at least a few characters, so a large container
+        # cannot fit and its (potentially expensive) repr is never built.
+        if len(obj) * 3 > budget:
+            return None
+    except Exception:
+        return None
+    return _normalized_native_repr(obj, budget)
+
+
+def _normalized_native_repr(obj: object, budget: int) -> str | None:
+    """Return a single-line native repr when it fits and is not the default."""
+    try:
+        native = repr(obj)
+    except Exception:
+        return None
+    if native.startswith("<") and " object at 0x" in native:
+        return None
+    native = single_line(native)
+    return native if len(native) <= budget else None
 
 
 def _render_scalar(obj: _Scalar, budget: int) -> str:
@@ -196,22 +281,33 @@ def _render_text(obj: str | bytes, budget: int, kind: str) -> str:
 
 
 def _literal_preview(obj: str | bytes, budget: int) -> str:
-    """Return the longest escaped, quoted prefix with an ellipsis that fits."""
+    """Return the longest escaped, quoted prefix with an ellipsis that fits.
+
+    ``len(repr(obj[:size]))`` is nondecreasing in ``size``: every character adds
+    at least one output character, and a quote-style flip only ever lengthens
+    the escaped form (the single-to-double flip happens on the first quote of a
+    quoteless prefix, the double-to-single flip re-escapes prior quotes). That
+    monotonicity makes the longest fitting prefix binary-searchable.
+    """
     if budget < 5:
         return ""
 
-    best = ""
-    # At least three characters are reserved for the ellipsis. Escape expansion can
-    # make a short source prefix consume the entire output budget, so stop once the
-    # candidate grows beyond the limit.
-    max_items = min(len(obj), budget)
-    for size in range(max_items + 1):
+    def candidate(size: int) -> str:
         literal = repr(obj[:size])
-        candidate = literal[:-1] + "..." + literal[-1]
-        if len(candidate) > budget:
-            continue
-        best = candidate
-    return best
+        return literal[:-1] + "..." + literal[-1]
+
+    # Each source character costs at least one output character, so prefixes
+    # longer than the budget can never fit.
+    low, high = 0, min(len(obj), budget)
+    if len(candidate(low)) > budget:
+        return ""
+    while low < high:
+        middle = (low + high + 1) // 2
+        if len(candidate(middle)) <= budget:
+            low = middle
+        else:
+            high = middle - 1
+    return candidate(low)
 
 
 def _render_sequence(
@@ -227,9 +323,8 @@ def _render_sequence(
 
     context.seen.add(obj_id)
     try:
-        open_bracket, close_bracket = (
-            ("(", ")") if isinstance(obj, tuple) else ("[", "]")
-        )
+        is_tuple = isinstance(obj, tuple)
+        open_bracket, close_bracket = ("(", ")") if is_tuple else ("[", "]")
         values: list[object] = []
         rendered: list[str] = []
 
@@ -237,57 +332,101 @@ def _render_sequence(
             candidate = _minimum(value)
             trial_values = rendered + [candidate]
             omitted = len(obj) - index - 1
-            if _sequence_cost(trial_values, omitted, isinstance(obj, tuple)) > budget:
+            cost = _parts_cost(trial_values, omitted, 2, singleton_comma=is_tuple)
+            if cost > budget:
                 break
             values.append(value)
             rendered.append(candidate)
 
         omitted = len(obj) - len(rendered)
         if not rendered:
-            inferred = _inferred_summary(obj, context) if allow_inference else None
-            if inferred is not None and len(inferred) <= budget:
-                return inferred
-            count_summary = f"{open_bracket}...{len(obj)} items{close_bracket}"
-            if len(count_summary) <= budget:
-                return count_summary
-            type_summary = f"<{type(obj).__name__}({len(obj)})>"
-            if len(type_summary) <= budget:
-                return type_summary
-            return _fit("...", budget)
+            return _collapsed_summary(
+                obj, budget, context, open_bracket, close_bracket, allow_inference
+            )
+
+        if allow_inference:
+            schema = _inferred_schema(obj, context)
+            if isinstance(schema, SequenceSchema) and isinstance(
+                schema.item, RecordSchema
+            ):
+                # A record sequence communicates more through its shared shape
+                # plus complete sample records than through the first records
+                # alone. Fall through when the summary cannot fit.
+                summary = _inferred_summary(obj, budget, context)
+                if summary is not None:
+                    return summary
 
         baseline = list(rendered)
         rendered = _refine_values(
             values,
             rendered,
-            budget - _sequence_cost(rendered, omitted, isinstance(obj, tuple)),
+            budget - _parts_cost(rendered, omitted, 2, singleton_comma=is_tuple),
             context,
         )
-        baseline_has_real_value = any(
-            _try_full(value, len(value_rendered), context.work) == value_rendered
-            for value, value_rendered in zip(values, baseline)
-        )
-        if allow_inference and rendered == baseline and not baseline_has_real_value:
-            inferred = _inferred_summary(obj, context)
-            if inferred is not None and len(inferred) <= budget:
-                return inferred
-        if allow_inference and not any(_CIRCULAR in value for value in rendered):
-            inferred = _inferred_summary(obj, context)
-            if inferred is not None and "[{'" in inferred and len(inferred) <= budget:
-                return inferred
+        if (
+            allow_inference
+            and rendered == baseline
+            and not _has_complete_baseline(values, baseline, context)
+        ):
+            summary = _inferred_summary(obj, budget, context)
+            if summary is not None:
+                return summary
         parts = rendered + ([f"...{omitted} more"] if omitted else [])
         body = ", ".join(parts)
-        if isinstance(obj, tuple) and len(obj) == 1 and omitted == 0:
+        if is_tuple and len(obj) == 1 and omitted == 0:
             body += ","
         return open_bracket + body + close_bracket
     finally:
         context.seen.discard(obj_id)
 
 
-def _sequence_cost(rendered: list[str], omitted: int, is_tuple: bool) -> int:
+def _parts_cost(
+    rendered: list[str],
+    omitted: int,
+    shell: int,
+    *,
+    singleton_comma: bool = False,
+) -> int:
+    """Cost of shell plus comma-joined parts and a truthful omission marker."""
     parts = rendered + ([f"...{omitted} more"] if omitted else [])
-    body_cost = sum(map(len, parts)) + max(0, len(parts) - 1) * 2
-    singleton_comma = 1 if is_tuple and len(rendered) == 1 and omitted == 0 else 0
-    return 2 + body_cost + singleton_comma
+    cost = shell + sum(map(len, parts)) + max(0, len(parts) - 1) * 2
+    if singleton_comma and len(rendered) == 1 and not omitted:
+        cost += 1
+    return cost
+
+
+def _has_complete_baseline(
+    values: list[object],
+    baseline: list[str],
+    context: RenderContext,
+) -> bool:
+    """True when any baseline entry already shows a complete value."""
+    return any(
+        _try_full(value, len(rendered), context.work) == rendered
+        for value, rendered in zip(values, baseline)
+    )
+
+
+def _collapsed_summary(
+    obj,
+    budget: int,
+    context: RenderContext,
+    open_bracket: str,
+    close_bracket: str,
+    allow_inference: bool = True,
+) -> str:
+    """Degradation ladder for a container whose skeleton cannot fit."""
+    if allow_inference:
+        summary = _inferred_summary(obj, budget, context)
+        if summary is not None:
+            return summary
+    count_summary = f"{open_bracket}...{len(obj)} items{close_bracket}"
+    if len(count_summary) <= budget:
+        return count_summary
+    type_summary = f"<{type(obj).__name__}({len(obj)})>"
+    if len(type_summary) <= budget:
+        return type_summary
+    return _fit("...", budget)
 
 
 def _render_mapping(obj: dict, budget: int, context: RenderContext) -> str:
@@ -306,7 +445,7 @@ def _render_mapping(obj: dict, budget: int, context: RenderContext) -> str:
             value_rendered = _minimum(value)
             trial = rendered + [f"{key_rendered}: {value_rendered}"]
             omitted = len(obj) - index - 1
-            if _mapping_cost(trial, omitted) > budget:
+            if _parts_cost(trial, omitted, 2) > budget:
                 break
             keys.append(key_rendered)
             values.append(value)
@@ -314,35 +453,22 @@ def _render_mapping(obj: dict, budget: int, context: RenderContext) -> str:
 
         omitted = len(obj) - len(rendered)
         if not rendered:
-            inferred = _inferred_summary(obj, context)
-            if inferred is not None and len(inferred) <= budget:
-                return inferred
-            count_summary = f"{{...{len(obj)} items}}"
-            if len(count_summary) <= budget:
-                return count_summary
-            type_summary = f"<dict({len(obj)})>"
-            if len(type_summary) <= budget:
-                return type_summary
-            return _fit("...", budget)
+            return _collapsed_summary(obj, budget, context, "{", "}")
 
         value_renderings = [part[len(key) + 2 :] for key, part in zip(keys, rendered)]
         baseline = list(value_renderings)
-        available = budget - _mapping_cost(rendered, omitted)
+        available = budget - _parts_cost(rendered, omitted, 2)
         value_renderings = _refine_values(values, value_renderings, available, context)
-        baseline_has_real_value = any(
-            _try_full(value, len(value_rendered), context.work) == value_rendered
-            for value, value_rendered in zip(values, baseline)
-        )
         only_summaries = all(
             value.startswith("<") and value.endswith(">") for value in value_renderings
         )
         if (
             only_summaries
-            and not baseline_has_real_value
             and not any(_CIRCULAR in value for value in value_renderings)
+            and not _has_complete_baseline(values, baseline, context)
         ):
-            inferred = _inferred_summary(obj, context)
-            if inferred is not None and len(inferred) <= budget:
+            inferred = _inferred_summary(obj, budget, context)
+            if inferred is not None:
                 return inferred
         rendered = [
             f"{key}: {value_rendered}"
@@ -352,11 +478,6 @@ def _render_mapping(obj: dict, budget: int, context: RenderContext) -> str:
         return "{" + ", ".join(parts) + "}"
     finally:
         context.seen.discard(obj_id)
-
-
-def _mapping_cost(rendered: list[str], omitted: int) -> int:
-    parts = rendered + ([f"...{omitted} more"] if omitted else [])
-    return 2 + sum(map(len, parts)) + max(0, len(parts) - 1) * 2
 
 
 def _render_set(
@@ -370,11 +491,14 @@ def _render_set(
 
     context.seen.add(obj_id)
     try:
-        frozen = isinstance(obj, frozenset)
-        prefix = "frozenset(" if frozen else ""
-        suffix = ")" if frozen else ""
+        # frozensets and set/frozenset subclasses spell their type name; the
+        # brace-only form is reserved for exactly ``set``.
+        named = type(obj) is not set
+        prefix = f"{type(obj).__name__}(" if named else ""
+        suffix = ")" if named else ""
         open_bracket = prefix + "{"
         close_bracket = "}" + suffix
+        shell = len(open_bracket) + len(close_bracket)
         values: list[object] = []
         rendered: list[str] = []
 
@@ -382,28 +506,19 @@ def _render_set(
             candidate = _minimum(value)
             trial_values = rendered + [candidate]
             omitted = len(obj) - index - 1
-            if _set_cost(trial_values, omitted, frozen) > budget:
+            if _parts_cost(trial_values, omitted, shell) > budget:
                 break
             values.append(value)
             rendered.append(candidate)
 
         omitted = len(obj) - len(rendered)
         if not rendered:
-            inferred = _inferred_summary(obj, context)
-            if inferred is not None and len(inferred) <= budget:
-                return inferred
-            count_summary = f"{open_bracket}...{len(obj)} items{close_bracket}"
-            if len(count_summary) <= budget:
-                return count_summary
-            type_summary = f"<{type(obj).__name__}({len(obj)})>"
-            if len(type_summary) <= budget:
-                return type_summary
-            return _fit("...", budget)
+            return _collapsed_summary(obj, budget, context, open_bracket, close_bracket)
 
         rendered = _refine_values(
             values,
             rendered,
-            budget - _set_cost(rendered, omitted, frozen),
+            budget - _parts_cost(rendered, omitted, shell),
             context,
         )
         parts = rendered + ([f"...{omitted} more"] if omitted else [])
@@ -412,51 +527,51 @@ def _render_set(
         context.seen.discard(obj_id)
 
 
-def _set_cost(rendered: list[str], omitted: int, frozen: bool) -> int:
-    parts = rendered + ([f"...{omitted} more"] if omitted else [])
-    shell_cost = len("frozenset({})") if frozen else 2
-    return shell_cost + sum(map(len, parts)) + max(0, len(parts) - 1) * 2
-
-
 def _render_deque(obj: collections.deque, budget: int, context: RenderContext) -> str:
+    name = type(obj).__name__
     suffix = f", maxlen={obj.maxlen})" if obj.maxlen is not None else ")"
-    inner_budget = budget - len("deque(") - len(suffix)
+    inner_budget = budget - len(name) - 1 - len(suffix)
     if inner_budget >= 3:
         inner = _render_sequence(obj, inner_budget, context, allow_inference=False)
-        candidate = "deque(" + inner + suffix
+        candidate = f"{name}(" + inner + suffix
         if len(candidate) <= budget:
             return candidate
-    return _fit_summary(f"<deque({len(obj)})>", budget)
+    summary = _inferred_summary(obj, budget, context)
+    if summary is not None:
+        return summary
+    return _fit_summary(f"<{name}({len(obj)})>", budget)
 
 
 def _render_counter(
     obj: collections.Counter, budget: int, context: RenderContext
 ) -> str:
+    name = type(obj).__name__
     if len(obj) > 256:
-        return _fit_summary(f"<Counter({len(obj)})>", budget)
+        return _fit_summary(f"<{name}({len(obj)})>", budget)
 
     ordered = dict(obj.most_common())
-    inner_budget = budget - len("Counter(") - 1
+    inner_budget = budget - len(name) - 2
     if inner_budget >= 3:
         inner = _render_mapping(ordered, inner_budget, context)
-        candidate = f"Counter({inner})"
+        candidate = f"{name}({inner})"
         if len(candidate) <= budget:
             return candidate
-    return _fit_summary(f"<Counter({len(obj)})>", budget)
+    return _fit_summary(f"<{name}({len(obj)})>", budget)
 
 
 def _render_defaultdict(
     obj: collections.defaultdict, budget: int, context: RenderContext
 ) -> str:
+    name = type(obj).__name__
     factory_name = _factory_name(obj.default_factory)
-    prefix = f"defaultdict({factory_name}, "
+    prefix = f"{name}({factory_name}, "
     inner_budget = budget - len(prefix) - 1
     if inner_budget >= 3:
         inner = _render_mapping(obj, inner_budget, context)
         candidate = prefix + inner + ")"
         if len(candidate) <= budget:
             return candidate
-    return _fit_summary(f"<defaultdict({len(obj)})>", budget)
+    return _fit_summary(f"<{name}({len(obj)})>", budget)
 
 
 def _render_namedtuple(obj: tuple, budget: int, context: RenderContext) -> str:
@@ -468,14 +583,9 @@ def _render_object(obj: object, budget: int, context: RenderContext) -> str:
     type_name = type(obj).__name__
 
     if not dataclasses.is_dataclass(obj):
-        try:
-            native = repr(obj)
-        except Exception:
-            native = None
+        native = _normalized_native_repr(obj, budget)
         if native is not None:
-            is_default = native.startswith("<") and " object at 0x" in native
-            if not is_default and len(native) <= budget:
-                return native
+            return native
 
     attrs = _object_attrs(obj)
     return _render_tracked_record(obj, attrs, type_name, budget, context)
@@ -545,7 +655,7 @@ def _render_record(
         value_rendered = _minimum(value)
         trial = rendered + [f"{name}={value_rendered}"]
         omitted = len(items) - index - 1
-        if _record_cost(trial, omitted, shell_cost) > budget:
+        if _parts_cost(trial, omitted, shell_cost) > budget:
             break
         names.append(name)
         values.append(value)
@@ -559,7 +669,7 @@ def _render_record(
     value_renderings = _refine_values(
         values,
         value_renderings,
-        budget - _record_cost(rendered, omitted, shell_cost),
+        budget - _parts_cost(rendered, omitted, shell_cost),
         context,
     )
     rendered = [
@@ -569,11 +679,6 @@ def _render_record(
     parts = rendered + ([f"...{omitted} more"] if omitted else [])
     result = f"{type_name}(" + ", ".join(parts) + ")"
     return result if len(result) <= budget else _fit_summary(tag, budget)
-
-
-def _record_cost(rendered: list[str], omitted: int, shell_cost: int) -> int:
-    parts = rendered + ([f"...{omitted} more"] if omitted else [])
-    return shell_cost + sum(map(len, parts)) + max(0, len(parts) - 1) * 2
 
 
 def _refine_values(
@@ -703,22 +808,8 @@ def _minimum(obj: object) -> str:
             if len(full) <= len(stub):
                 return full
         return stub
-    if isinstance(obj, collections.defaultdict):
-        return f"<defaultdict({len(obj)})>"
-    if isinstance(obj, collections.Counter):
-        return f"<Counter({len(obj)})>"
-    if isinstance(obj, list):
-        return f"<list({len(obj)})>"
-    if isinstance(obj, tuple):
-        return f"<tuple({len(obj)})>"
-    if isinstance(obj, dict):
-        return f"<dict({len(obj)})>"
-    if isinstance(obj, collections.deque):
-        return f"<deque({len(obj)})>"
-    if isinstance(obj, set):
-        return f"<set({len(obj)})>"
-    if isinstance(obj, frozenset):
-        return f"<frozenset({len(obj)})>"
+    if isinstance(obj, _STRUCTURED_TYPES):
+        return f"<{type(obj).__name__}({len(obj)})>"
     return f"<{type(obj).__name__}>"
 
 
@@ -743,6 +834,12 @@ def _write_full(
 ) -> None:
     if work is not None and not work.consume():
         raise _CannotRenderFull
+    if isinstance(obj, (str, bytes)) or _is_scalar(obj):
+        # A subclass with its own repr controls its own spelling; the probe
+        # must not claim the builtin rendering is complete for it.
+        if not _faithful_scalar(obj):
+            raise _CannotRenderFull
+
     if isinstance(obj, str):
         # A string repr needs at least one character per source character plus two
         # quotes. Reject obvious overflows before allocating the complete repr.
@@ -765,19 +862,9 @@ def _write_full(
         writer.write(rendered)
         return
 
-    if not isinstance(
-        obj,
-        (
-            list,
-            tuple,
-            dict,
-            set,
-            frozenset,
-            collections.deque,
-            collections.Counter,
-            collections.defaultdict,
-        ),
-    ):
+    # Reject namedtuples and container subclasses whose repr differs from the
+    # structural spelling; they degrade through their own representations.
+    if not _faithful_structured(obj):
         raise _CannotRenderFull
 
     obj_id = id(obj)
@@ -889,20 +976,53 @@ def _factory_name(factory: object) -> str:
     return getattr(factory, "__name__", type(factory).__name__)
 
 
-def _inferred_summary(obj: object, context: RenderContext) -> str | None:
-    cache_key = (id(obj), False)
-    if cache_key not in context.schema_cache:
-        context.schema_cache[cache_key] = infer_schema(
-            obj,
-            context.inference,
-            context.inspection,
-        )
-    schema = context.schema_cache[cache_key]
-    if not isinstance(schema, Schema):
+def _inferred_schema(obj: object, context: RenderContext) -> Schema | None:
+    key = id(obj)
+    entry = context.schema_cache.get(key)
+    if entry is None:
+        schema = infer_schema(obj, context.inference, context.inspection)
+        entry = (obj, schema)
+        context.schema_cache[key] = entry
+    schema = entry[1]
+    return schema if isinstance(schema, Schema) else None
+
+
+def _inferred_summary(obj: object, budget: int, context: RenderContext) -> str | None:
+    """Render the best schema summary that fits, with sample values if possible.
+
+    Sequences prefer the sampled form ``<list[str](200): 'alice', 'bob', ...>``
+    from the design's degradation ladder, then the bare ``<list[str](200)>``.
+    Mappings and records use their schema-only forms.
+    """
+    schema = _inferred_schema(obj, context)
+    if schema is None:
         return None
     if isinstance(schema, RecordSchema):
-        return f"<{schema.format()}>"
-    return f"<{schema.format()}({len(obj)})>"
+        summary = f"<{schema.format()}>"
+        return summary if len(summary) <= budget else None
+
+    bare = f"<{schema.format()}({len(obj)})>"
+    if len(bare) > budget:
+        return None
+    if isinstance(obj, dict) or not len(obj):
+        return bare
+
+    head = f"<{schema.format()}({len(obj)}): "
+    samples: list[str] = []
+    used = 0
+    for value in obj:
+        # Cost so far plus separators for the next sample and the ", ...>" tail.
+        allowance = budget - len(head) - used - 2 * len(samples) - 6
+        if allowance <= 0:
+            break
+        sample = _try_complete_for_plan(value, allowance, context)
+        if sample is None:
+            break
+        samples.append(sample)
+        used += len(sample)
+    if not samples:
+        return bare
+    return head + ", ".join(samples) + ", ...>"
 
 
 def _bounded_scalar_repr(obj: _Scalar, budget: int) -> str | None:

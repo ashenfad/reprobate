@@ -9,7 +9,7 @@ Renders any Python object into a string that fits within a character budget. Nes
 - **Hard budget guarantee** -- output is always `<= budget` characters
 - **Three-phase degradation** -- full render, then `name=<type(len)>` stubs, then `...N more` counts
 - **Greedy and even policies** -- prioritize depth (first fields in detail) or breadth (all fields equally)
-- **Bounded type inference** -- exact or best-effort aggregate hints such as `<list[str](200)>`
+- **Bounded type inference** -- exact or best-effort aggregate hints such as `<list[str](200)>`, with complete sample values when space allows: `<list[{'id': int}](80): {'id': 0}, ...>`
 - **Cycle detection** -- circular references render as `<...>` instead of stack overflows
 - **Type registry** -- `@register(MyType)` for custom budget-aware renderers
 - **Protocol method** -- `__budget_repr__(self, budget)` on any class

@@ -50,6 +50,33 @@ def test_record_inference_distinguishes_optional_and_nullable_fields():
     assert "'error'?: str | None" in result
 
 
+def test_record_sequence_summary_includes_sample_values_when_affordable():
+    value = [{"name": f"user_{index}", "score": index * 10} for index in range(50)]
+
+    result = render(value, 90)
+
+    assert result.startswith("<list[{'name': str, 'score': int}](50): ")
+    assert "{'name': 'user_0', 'score': 0}" in result
+    assert result.endswith(", ...>")
+    assert len(result) <= 90
+
+
+def test_record_sequence_summary_spends_a_near_full_budget_on_samples():
+    value = [{"name": f"user_{index}", "score": index * 10} for index in range(50)]
+    budget = len(repr(value)) - 1
+
+    result = render(value, budget)
+
+    assert "'score': 10" in result
+    assert len(result) > budget * 0.9
+
+
+def test_record_sequence_summary_degrades_to_bare_schema():
+    value = [{"name": f"user_{index}", "score": index * 10} for index in range(50)]
+
+    assert render(value, 60) == "<list[{'name': str, 'score': int}](50)>"
+
+
 def test_standalone_fixed_record_inference_preserves_literal_keys():
     value = {
         "users": ["alice" * 30] * 200,
