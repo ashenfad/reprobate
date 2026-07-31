@@ -7,8 +7,15 @@ from typing import TypeAlias
 
 from .._session import RenderSession, activate_session
 from ..registry import get_renderer
-from .context import InferencePolicy, Policy, RenderContext
+from .context import (
+    InferencePolicy,
+    InspectionBudget,
+    Policy,
+    RenderContext,
+    render_work_budget,
+)
 from .inference import infer_schema
+from .planning import allocate_even
 from .schema import RecordSchema, Schema
 from .writer import BoundedWriter, BudgetExceeded
 
@@ -41,7 +48,11 @@ def render(
     if budget == 0:
         return ""
 
-    context = RenderContext(policy=policy, inference=inference)
+    context = RenderContext(
+        policy=policy,
+        inference=inference,
+        work=render_work_budget(budget),
+    )
     session = RenderSession(
         render_child=lambda child, child_budget: _render_value(
             child, child_budget, context
@@ -75,7 +86,11 @@ def render_attrs(
     if budget == 0:
         return ""
 
-    context = RenderContext(policy=policy, inference=inference)
+    context = RenderContext(
+        policy=policy,
+        inference=inference,
+        work=render_work_budget(budget),
+    )
     session = RenderSession(
         render_child=lambda child, child_budget: _render_value(
             child, child_budget, context
@@ -99,7 +114,7 @@ def _render_value(obj: object, budget: int, context: RenderContext) -> str:
     if isinstance(obj, tuple) and hasattr(type(obj), "_fields"):
         return _render_namedtuple(obj, budget, context)
 
-    full = _try_full(obj, budget)
+    full = _try_full(obj, budget, context.work)
     if full is not None:
         return full
 
@@ -248,7 +263,7 @@ def _render_sequence(
             context,
         )
         baseline_has_real_value = any(
-            _try_full(value, len(value_rendered)) == value_rendered
+            _try_full(value, len(value_rendered), context.work) == value_rendered
             for value, value_rendered in zip(values, baseline)
         )
         if allow_inference and rendered == baseline and not baseline_has_real_value:
@@ -315,7 +330,7 @@ def _render_mapping(obj: dict, budget: int, context: RenderContext) -> str:
         available = budget - _mapping_cost(rendered, omitted)
         value_renderings = _refine_values(values, value_renderings, available, context)
         baseline_has_real_value = any(
-            _try_full(value, len(value_rendered)) == value_rendered
+            _try_full(value, len(value_rendered), context.work) == value_rendered
             for value, value_rendered in zip(values, baseline)
         )
         only_summaries = all(
@@ -582,16 +597,80 @@ def _refine_values(
                 break
         return result
 
-    remaining = len(values)
+    return _refine_values_even(values, result, available, context)
+
+
+def _refine_values_even(
+    values: list[object],
+    rendered: list[str],
+    available: int,
+    context: RenderContext,
+) -> list[str]:
+    """Plan sibling demand before max-min allocation and one render pass."""
+    result = list(rendered)
+    complete: list[str | None] = [None] * len(values)
+
+    # First accept complete representations that already fit the baseline. A shorter
+    # complete value is both more truthful and returns its saved characters before
+    # sibling demand is measured.
     for index, value in enumerate(values):
-        share = available // remaining if remaining else 0
-        candidate = _render_value(value, len(result[index]) + share, context)
+        full = _try_complete_for_plan(value, len(result[index]), context)
+        if full is None:
+            continue
+        available += len(result[index]) - len(full)
+        result[index] = full
+        complete[index] = full
+
+    demands: list[int | None] = []
+    for index, value in enumerate(values):
+        if complete[index] is not None:
+            demands.append(0)
+            continue
+
+        full = _try_complete_for_plan(
+            value,
+            len(result[index]) + available,
+            context,
+        )
+        if full is None:
+            demands.append(None)
+            continue
+        complete[index] = full
+        demands.append(len(full) - len(result[index]))
+
+    allocations = allocate_even(demands, available)
+    carry = 0
+
+    for index, value in enumerate(values):
+        allowance = allocations[index] + carry
+        demand = demands[index]
+        full = complete[index]
+        if full is not None and demand is not None and allowance >= demand:
+            candidate = full
+        elif allowance > 0:
+            candidate = _render_value(value, len(result[index]) + allowance, context)
+        else:
+            candidate = result[index]
+
         growth = len(candidate) - len(result[index])
-        if candidate != result[index] and growth <= share:
+        if candidate != result[index] and growth <= allowance:
             result[index] = candidate
-            available -= growth
-        remaining -= 1
+            carry = allowance - growth
+        else:
+            carry = allowance
+
     return result
+
+
+def _try_complete_for_plan(
+    obj: object, budget: int, context: RenderContext
+) -> str | None:
+    """Probe complete built-in output without invoking opaque customization hooks."""
+    if _custom_renderer(obj) is not None:
+        return None
+    if isinstance(obj, tuple) and hasattr(type(obj), "_fields"):
+        return None
+    return _try_full(obj, budget, context.work)
 
 
 def _minimum_key(obj: object) -> str:
@@ -643,16 +722,27 @@ def _minimum(obj: object) -> str:
     return f"<{type(obj).__name__}>"
 
 
-def _try_full(obj: object, budget: int) -> str | None:
+def _try_full(
+    obj: object,
+    budget: int,
+    work: InspectionBudget | None = None,
+) -> str | None:
     writer = BoundedWriter(budget)
     try:
-        _write_full(obj, writer, set())
+        _write_full(obj, writer, set(), work)
     except (BudgetExceeded, _CannotRenderFull):
         return None
     return writer.getvalue()
 
 
-def _write_full(obj: object, writer: BoundedWriter, seen: set[int]) -> None:
+def _write_full(
+    obj: object,
+    writer: BoundedWriter,
+    seen: set[int],
+    work: InspectionBudget | None = None,
+) -> None:
+    if work is not None and not work.consume():
+        raise _CannotRenderFull
     if isinstance(obj, str):
         # A string repr needs at least one character per source character plus two
         # quotes. Reject obvious overflows before allocating the complete repr.
@@ -699,7 +789,7 @@ def _write_full(obj: object, writer: BoundedWriter, seen: set[int]) -> None:
             writer.write("defaultdict(")
             writer.write(repr(obj.default_factory))
             writer.write(", ")
-            _write_mapping_items(obj.items(), writer, seen)
+            _write_mapping_items(obj.items(), writer, seen, work)
             writer.write(")")
             return
 
@@ -711,12 +801,12 @@ def _write_full(obj: object, writer: BoundedWriter, seen: set[int]) -> None:
             if len(obj) * 3 > writer.remaining:
                 raise BudgetExceeded
             writer.write("Counter(")
-            _write_mapping_items(obj.most_common(), writer, seen)
+            _write_mapping_items(obj.most_common(), writer, seen, work)
             writer.write(")")
             return
 
         if isinstance(obj, dict):
-            _write_mapping_items(obj.items(), writer, seen)
+            _write_mapping_items(obj.items(), writer, seen, work)
             return
 
         if isinstance(obj, collections.deque):
@@ -724,7 +814,7 @@ def _write_full(obj: object, writer: BoundedWriter, seen: set[int]) -> None:
                 writer.write("deque()")
                 return
             writer.write("deque(")
-            _write_sequence_items(obj, "[", "]", writer, seen)
+            _write_sequence_items(obj, "[", "]", writer, seen, work)
             if obj.maxlen is not None:
                 writer.write(f", maxlen={obj.maxlen}")
             writer.write(")")
@@ -736,7 +826,7 @@ def _write_full(obj: object, writer: BoundedWriter, seen: set[int]) -> None:
                 return
             if isinstance(obj, frozenset):
                 writer.write("frozenset(")
-            _write_sequence_items(obj, "{", "}", writer, seen)
+            _write_sequence_items(obj, "{", "}", writer, seen, work)
             if isinstance(obj, frozenset):
                 writer.write(")")
             return
@@ -750,6 +840,7 @@ def _write_full(obj: object, writer: BoundedWriter, seen: set[int]) -> None:
             close_bracket,
             writer,
             seen,
+            work,
             trailing_comma=isinstance(obj, tuple) and len(obj) == 1,
         )
     finally:
@@ -760,14 +851,15 @@ def _write_mapping_items(
     items: Iterable[tuple[object, object]],
     writer: BoundedWriter,
     seen: set[int],
+    work: InspectionBudget | None = None,
 ) -> None:
     writer.write("{")
     for index, (key, value) in enumerate(items):
         if index:
             writer.write(", ")
-        _write_full(key, writer, seen)
+        _write_full(key, writer, seen, work)
         writer.write(": ")
-        _write_full(value, writer, seen)
+        _write_full(value, writer, seen, work)
     writer.write("}")
 
 
@@ -777,6 +869,7 @@ def _write_sequence_items(
     close_bracket: str,
     writer: BoundedWriter,
     seen: set[int],
+    work: InspectionBudget | None = None,
     *,
     trailing_comma: bool = False,
 ) -> None:
@@ -784,7 +877,7 @@ def _write_sequence_items(
     for index, value in enumerate(values):
         if index:
             writer.write(", ")
-        _write_full(value, writer, seen)
+        _write_full(value, writer, seen, work)
     if trailing_comma:
         writer.write(",")
     writer.write(close_bracket)

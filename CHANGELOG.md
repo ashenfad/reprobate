@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Strings and bytes retain escaped, single-line previews with opportunistic length metadata
 - Sets preserve native iteration order instead of imposing a presentation order
 - Optional table and array renderers share bounded semantic summaries, including authoritative column types
+- Even allocation plans bounded sibling demand and redistributes unused shares
 
 ## [0.1.1] - 2026-02-28
 

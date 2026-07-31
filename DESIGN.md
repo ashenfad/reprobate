@@ -325,8 +325,12 @@ siblings fit.
 ### Even policy
 
 `even` prefers sibling breadth. It establishes comparable representations for
-visible siblings, then applies refinements round-robin. Nested containers inherit the
-same policy.
+visible siblings, then uses max-min allocation for refinements. Before allocation,
+bounded complete-render probes identify children with finite demand. Children that
+complete below their initial share return the unused characters to the common pool,
+which is redistributed among siblings that can still improve. Opaque custom
+renderers are treated as open-ended and are not invoked speculatively. Nested
+containers inherit the same policy.
 
 Both policies share these higher-priority rules:
 
@@ -465,6 +469,7 @@ Maximum schema depth:                    3
 Maximum merged record fields:            32
 Maximum cumulative record-key chars:  1,024
 Maximum runtime type-name chars:         128
+Render-planning work nodes: max(1,024, 4 * character budget)
 ```
 
 These are implementation defaults to validate through tests and benchmarks, not
@@ -500,21 +505,17 @@ Carries state that should be explicit inside the engine:
 ```python
 @dataclass
 class RenderContext:
-    budget: int
     policy: Policy
     inference: InferencePolicy
     seen: set[int]
-    path: tuple[object, ...]
     inspection: InspectionBudget
-    schema: Schema | None = None
+    work: InspectionBudget
+    schema_cache: dict
 ```
 
-`schema` is initially internal. Keeping it in the model allows agex or another
-integration to provide an authoritative tool-output schema later without redesigning
-the allocator.
-
-Possible future context fields include redaction rules, maximum depth, and a cost
-function for approximate token or byte budgeting.
+External schema input and path tracking remain deferred internally as well as
+publicly. Possible future context fields include `schema`, `path`, redaction rules,
+maximum depth, and a cost function for approximate token or byte budgeting.
 
 ### Semantic nodes
 
@@ -540,9 +541,10 @@ records, and unknown values. Every inferred component carries its evidence level
 ### Planner
 
 The planner selects a structural skeleton and refinements under the available
-budget. It should use deterministic local decisions rather than a global optimizer.
-The planner operates on lengths and emission fragments, not repeatedly concatenated
-candidate strings.
+budget. It uses deterministic local decisions rather than a global optimizer. For
+`even`, it performs bounded complete-demand probes at each visible sibling layer,
+then max-min allocates the remaining characters. Probes share a work allowance
+proportional to the possible output and do not invoke opaque customization hooks.
 
 ### Bounded writer
 
@@ -724,8 +726,8 @@ proven. A schema-bearing wrapper is not the primary planned API.
 4. Truncated strings and bytes include original length opportunistically, after a
    useful preview fits.
 5. Sets preserve native iteration order and make no cross-process stability promise.
-6. Public external-schema input is deferred. The internal context supports it, and a
-   future keyword-only `schema=` argument is preferred over a wrapper.
+6. Public and internal external-schema input remain deferred. A future keyword-only
+   `schema=` argument is preferred over a wrapper.
 
 The central architecture remains: bounded full rendering first, then outer
 structural coverage, real values where affordable, schema as a compact fallback, and
