@@ -125,6 +125,14 @@ def test_custom_renderer_cycle_uses_active_session_state():
     assert render(Recursive(), 100) == "Recursive(<...>)"
 
 
+def test_custom_renderer_line_breaks_are_escaped():
+    class Multiline:
+        def __budget_repr__(self, budget):
+            return "first\nsecond"
+
+    assert render(Multiline(), 100) == "first\\nsecond"
+
+
 def test_every_dataclass_budget_is_respected():
     @dataclasses.dataclass
     class Payload:

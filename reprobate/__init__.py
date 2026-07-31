@@ -1,9 +1,10 @@
 """reprobate: Budget-controlled repr for Python objects."""
 
-from .core import Policy, render, render_attrs, render_child
+from .core import InferencePolicy, Policy, render, render_attrs, render_child
 from .registry import register
 
 __all__ = [
+    "InferencePolicy",
     "Policy",
     "register",
     "render",

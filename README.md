@@ -9,6 +9,7 @@ Renders any Python object into a string that fits within a character budget. Nes
 - **Hard budget guarantee** -- output is always `<= budget` characters
 - **Three-phase degradation** -- full render, then `name=<type(len)>` stubs, then `...N more` counts
 - **Greedy and even policies** -- prioritize depth (first fields in detail) or breadth (all fields equally)
+- **Bounded type inference** -- exact or best-effort aggregate hints such as `<list[str](200)>`
 - **Cycle detection** -- circular references render as `<...>` instead of stack overflows
 - **Type registry** -- `@register(MyType)` for custom budget-aware renderers
 - **Protocol method** -- `__budget_repr__(self, budget)` on any class
@@ -34,7 +35,7 @@ reprobate.render({"name": "alice", "scores": [98, 87, 95, 72, 88]}, 30)
 # "{'name': 'alice', ...1 more}"
 
 reprobate.render(list(range(1000)), 40)
-# "[0, 1, 2, 3, ...996 more]"
+# "[0, 1, 2, 3, 4, 5, 6, 7, 8, ...991 more]"
 ```
 
 ## Policies
@@ -50,14 +51,38 @@ class Agent:
     config: dict = None
     history: list = None
 
+agent = Agent()
+
 # Greedy: first fields get full detail
 reprobate.render(agent, 100, policy="greedy")
-# "Agent(desc='A very long description that eats the budget', important_note=<str(18)>, ...3 more)"
+# "Agent(desc='A very long d...', important_note=<str(18)>, status=<str(7)>, config=None, history=None)"
 
 # Even: all fields get comparable detail
 reprobate.render(agent, 100, policy="even")
-# "Agent(desc='A very long...', important_note='critical info...', status='running', ...2 more)"
+# "Agent(desc='A ver...', important_note='critic...', status='running', config=None, history=None)"
 ```
+
+## Inference
+
+Aggregate type hints are controlled independently from budget allocation:
+
+```python
+values = ["alice" * 30] * 1000
+
+reprobate.render(values, 25)
+# "<list[str](1000)>"
+
+reprobate.render(values, 25, inference="exact")
+# "<list(1000)>" -- too large for exhaustive inspection
+
+reprobate.render(values, 25, inference="off")
+# "[<str(150)>, ...999 more]"
+```
+
+`"best_effort"` is the default and uses bounded sampling for large containers.
+`"exact"` emits aggregate types only after exhaustive bounded inspection; `"off"`
+disables aggregate runtime inference. Type expressions are diagnostic hints, not
+validation guarantees.
 
 ## Custom renderers
 
