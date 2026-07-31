@@ -63,6 +63,21 @@ def test_self_referencing_mapping_uses_circular_marker():
     assert render(value, 100, inference="off") == "{'self': <...>}"
 
 
+def test_self_referencing_counter_uses_circular_marker():
+    value = collections.Counter()
+    value["self"] = value
+
+    assert render(value, 20_000, inference="off") == "Counter({'self': <...>})"
+
+
+def test_counter_with_unsortable_values_matches_native_insertion_order():
+    value = collections.Counter()
+    value["a"] = 1
+    value["b"] = "text"
+
+    assert render(value, 100, inference="off") == repr(value)
+
+
 def test_shared_child_is_not_mistaken_for_cycle():
     shared = [1, 2, 3]
     value = [shared, shared]

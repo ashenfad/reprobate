@@ -562,14 +562,31 @@ def _render_counter(
     if len(obj) > 256:
         return _fit_summary(f"<{name}({len(obj)})>", budget)
 
-    ordered = dict(obj.most_common())
-    inner_budget = budget - len(name) - 2
-    if inner_budget >= 3:
-        inner = _render_mapping(ordered, inner_budget, context)
-        candidate = f"{name}({inner})"
-        if len(candidate) <= budget:
-            return candidate
-    return _fit_summary(f"<{name}({len(obj)})>", budget)
+    # The counter renders through an ordered copy, so cycle detection must
+    # track the original object; the copies get fresh ids on every level.
+    obj_id = id(obj)
+    if obj_id in context.seen:
+        return _fit(_CIRCULAR, budget)
+    context.seen.add(obj_id)
+    try:
+        ordered = _counter_ordered(obj)
+        inner_budget = budget - len(name) - 2
+        if inner_budget >= 3:
+            inner = _render_mapping(ordered, inner_budget, context)
+            candidate = f"{name}({inner})"
+            if len(candidate) <= budget:
+                return candidate
+        return _fit_summary(f"<{name}({len(obj)})>", budget)
+    finally:
+        context.seen.discard(obj_id)
+
+
+def _counter_ordered(obj: collections.Counter) -> dict:
+    """Most-common order, falling back to insertion order like Counter.__repr__."""
+    try:
+        return dict(obj.most_common())
+    except TypeError:
+        return dict(obj)
 
 
 def _render_defaultdict(
@@ -901,7 +918,7 @@ def _write_full(
             if len(obj) * 3 > writer.remaining:
                 raise BudgetExceeded
             writer.write("Counter(")
-            _write_mapping_items(obj.most_common(), writer, seen, work)
+            _write_mapping_items(_counter_ordered(obj).items(), writer, seen, work)
             writer.write(")")
             return
 
