@@ -442,7 +442,7 @@ def _complete_count(
     )
 
 
-_UNIFORM_MISSING = object()
+_UNIFORM_SCALARS = frozenset({bool, int, float, str, bytes})
 
 
 def _uniform_product(
@@ -457,48 +457,52 @@ def _uniform_product(
     schema summaries; it applies only to whole containers and never to runs.
     Proving uniformity requires reading every element, so the scan must fit
     inside the remaining work allowance — larger budgets unlock larger proofs.
+    The first element must render completely within the product shell before
+    the scan runs, so oversized elements never fund an input-sized proof.
     """
     if len(obj) < 2 or len(obj) > context.work.remaining:
         return None
-    element = _uniform_element(obj, context.work)
-    if element is _UNIFORM_MISSING:
+    first = next(iter(obj))
+    shell = f"(,) * {len(obj)}" if is_tuple else f"[] * {len(obj)}"
+    element_budget = budget - len(shell)
+    if element_budget <= 0:
         return None
-    rendered = _try_full(element, budget, context.work)
+    rendered = _try_full(first, element_budget, context.work)
     if rendered is None:
         return None
+    if not _is_uniform(obj, context.work):
+        return None
     if is_tuple:
-        candidate = f"({rendered},) * {len(obj)}"
-    else:
-        candidate = f"[{rendered}] * {len(obj)}"
-    return candidate if len(candidate) <= budget else None
+        return f"({rendered},) * {len(obj)}"
+    return f"[{rendered}] * {len(obj)}"
 
 
-def _uniform_element(
+def _is_uniform(
     obj: list | tuple | collections.deque,
     work: InspectionBudget,
-) -> object:
-    """Return the shared element, or ``_UNIFORM_MISSING`` when not uniform.
+) -> bool:
+    """Whether every element is provably the same value.
 
     Identity covers the common ``[x] * n`` construction. Distinct objects
-    must be scalars of the same type with equal values, and floats must also
-    agree on repr so ``0.0`` never stands in for ``-0.0``.
+    must be exact builtin scalars of one type with equal values — subclass
+    comparisons run user code that may raise, and subclass state can differ
+    even when values compare equal. Floats must also agree on repr so
+    ``0.0`` never stands in for ``-0.0``.
     """
     iterator = iter(obj)
     first = next(iterator)
     for value in iterator:
         if not work.consume():
-            return _UNIFORM_MISSING
+            return False
         if value is first:
             continue
-        if type(value) is not type(first):
-            return _UNIFORM_MISSING
-        if not isinstance(first, (bool, int, float, str, bytes)):
-            return _UNIFORM_MISSING
+        if type(first) not in _UNIFORM_SCALARS or type(value) is not type(first):
+            return False
         if value != first:
-            return _UNIFORM_MISSING
+            return False
         if isinstance(first, float) and repr(value) != repr(first):
-            return _UNIFORM_MISSING
-    return first
+            return False
+    return True
 
 
 def _collapsed_summary(
