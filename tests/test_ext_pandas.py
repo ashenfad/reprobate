@@ -40,8 +40,9 @@ class TestDataFrame:
 
         r = reprobate.render(df, 600)
 
+        # String columns are ``str`` in pandas 3 and ``object`` before it.
         assert r == (
-            "DataFrame(3x2, {'name': str, 'score': int64}, "
+            f"DataFrame(3x2, {{'name': {df.dtypes['name']}, 'score': int64}}, "
             "[('ada', 7), ('bo', 2), ('cy', 5)])"
         )
 
