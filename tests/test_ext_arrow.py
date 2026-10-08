@@ -8,10 +8,10 @@ import reprobate  # noqa: E402
 
 
 class TestTable:
-    def test_small_uses_native_repr(self):
+    def test_small_renders_rows_instead_of_escaped_native_repr(self):
         table = pa.table({"a": [1, 2], "b": [3, 4]})
         r = reprobate.render(table, 500)
-        assert r == repr(table).replace("\n", "\\n")
+        assert r == "Table(2x2, {'a': int64, 'b': int64}, [(1, 3), (2, 4)])"
 
     def test_compact_fallback(self):
         table = pa.table({f"col_{i}": range(100) for i in range(10)})
@@ -63,10 +63,10 @@ class TestArray:
 
 
 class TestChunkedArray:
-    def test_small_uses_native_repr(self):
+    def test_small_renders_values_instead_of_escaped_native_repr(self):
         chunked = pa.chunked_array([[1, 2], [3, 4]])
         r = reprobate.render(chunked, 500)
-        assert r == repr(chunked).replace("\n", "\\n")
+        assert r == "ChunkedArray(4, int64, [1, 2, 3, 4])"
 
     def test_compact_fallback(self):
         chunked = pa.chunked_array([list(range(1000))])

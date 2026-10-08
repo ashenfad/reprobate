@@ -27,14 +27,35 @@ def native_repr_if_fits(obj: object, budget: int) -> str | None:
     return rendered if len(rendered) <= budget else None
 
 
+def one_line_native_repr(obj: object, budget: int) -> str | None:
+    """Return a native repr only when it is already one line and fits.
+
+    Table and series reprs rely on multi-line alignment; escaped onto one line
+    they lose it and spend budget on escapes, so the typed summary wins.
+    """
+    try:
+        rendered = repr(obj)
+    except Exception:
+        return None
+    if "\n" in rendered or "\r" in rendered:
+        return None
+    return rendered if len(rendered) <= budget else None
+
+
 def render_table_summary(
     kind: str,
     rows: int,
     columns: Sequence[TableColumn],
     budget: int,
     render_value: RenderValue,
+    *,
+    row_at: Callable[[int], object] | None = None,
+    row_limit: int = 10,
 ) -> str:
-    """Render table shape plus a bounded authoritative column schema."""
+    """Render table shape, a bounded authoritative column schema, and rows.
+
+    Leading rows, as tuples in column order, follow only a complete schema.
+    """
     column_count = len(columns)
     shape = f"{rows}x{column_count}"
     base = f"{kind}({shape})"
@@ -85,7 +106,12 @@ def render_table_summary(
     omitted = column_count - len(parts)
     if omitted:
         parts.append(f"...{omitted} more")
-    return prefix + ", ".join(parts) + suffix
+    header = prefix + ", ".join(parts) + "}"
+    if omitted or row_at is None or not rows:
+        return header + ")"
+    return header + _render_samples(
+        header, rows, row_at, row_limit, budget, render_value
+    )
 
 
 def render_array_summary(
@@ -127,18 +153,37 @@ def render_array_summary(
     if value_at is None:
         return base
 
+    if element_count == 0:
+        if len(header) + len(", [])") > budget:
+            return base
+        return header + ", [])"
+    return header + _render_samples(
+        header, element_count, value_at, value_limit, budget, render_value
+    )
+
+
+def _render_samples(
+    header: str,
+    count: int,
+    value_at: Callable[[int], object],
+    limit: int,
+    budget: int,
+    render_value: RenderValue,
+) -> str:
+    """Render the closing ``, [v1, v2, ...N more])`` of a summary.
+
+    Returns just ``)`` when no informative sample fits after ``header``.
+    """
     prefix = header + ", ["
     suffix = "])"
     if len(prefix) + len(suffix) > budget:
-        return base
-    if element_count == 0:
-        return prefix + suffix
+        return ")"
 
     parts: list[str] = []
     used = 0
-    for index in range(min(element_count, value_limit)):
+    for index in range(min(count, limit)):
         separator = 2 if parts else 0
-        omitted = element_count - index - 1
+        omitted = count - index - 1
         omission = f"...{omitted} more" if omitted else ""
         omission_cost = (2 if omitted else 0) + len(omission)
         value_budget = (
@@ -162,12 +207,12 @@ def render_array_summary(
         used += separator + len(rendered)
 
     if not parts:
-        return base
+        return ")"
 
-    omitted = element_count - len(parts)
+    omitted = count - len(parts)
     if omitted:
         parts.append(f"...{omitted} more")
-    return prefix + ", ".join(parts) + suffix
+    return ", [" + ", ".join(parts) + suffix
 
 
 def _shape_text(shape: int | Sequence[int]) -> str:
