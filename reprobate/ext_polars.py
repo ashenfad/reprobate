@@ -7,7 +7,7 @@ except ImportError:
 
 from ._engine.summaries import (
     TableColumn,
-    native_repr_if_fits,
+    one_line_native_repr,
     render_array_summary,
     render_table_summary,
 )
@@ -18,7 +18,7 @@ if pl is not None:
 
     @register(pl.DataFrame)
     def render_dataframe(obj: "pl.DataFrame", budget: int) -> str:
-        native = native_repr_if_fits(obj, budget)
+        native = one_line_native_repr(obj, budget)
         if native is not None:
             return native
 
@@ -26,12 +26,12 @@ if pl is not None:
             TableColumn(name, str(dtype)) for name, dtype in obj.schema.items()
         )
         return render_table_summary(
-            "DataFrame", len(obj), columns, budget, render_child
+            "DataFrame", len(obj), columns, budget, render_child, row_at=obj.row
         )
 
     @register(pl.Series)
     def render_series(obj: "pl.Series", budget: int) -> str:
-        native = native_repr_if_fits(obj, budget)
+        native = one_line_native_repr(obj, budget)
         if native is not None:
             return native
 
@@ -43,5 +43,6 @@ if pl is not None:
             len(obj),
             budget,
             render_child,
+            value_at=obj.__getitem__,
             metadata=metadata,
         )

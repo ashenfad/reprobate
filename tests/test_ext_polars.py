@@ -8,10 +8,10 @@ import reprobate  # noqa: E402
 
 
 class TestDataFrame:
-    def test_small_uses_native_repr(self):
+    def test_small_renders_rows_instead_of_escaped_native_repr(self):
         df = pl.DataFrame({"a": [1, 2], "b": [3, 4]})
         r = reprobate.render(df, 200)
-        assert r == repr(df).replace("\n", "\\n")
+        assert r == "DataFrame(2x2, {'a': Int64, 'b': Int64}, [(1, 3), (2, 4)])"
 
     def test_compact_fallback(self):
         df = pl.DataFrame({"a": [1, 2], "b": [3, 4]})
@@ -52,9 +52,7 @@ class TestSeries:
     def test_series(self):
         s = pl.Series("vals", [1, 2, 3])
         r = reprobate.render(s, 200)
-        assert "Series" in r
-        assert "3" in r
-        assert "vals" in r
+        assert r == "Series(3, Int64, name='vals', [1, 2, 3])"
 
     def test_budget_respected(self):
         s = pl.Series("vals", range(1000))

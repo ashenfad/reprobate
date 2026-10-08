@@ -47,8 +47,21 @@ def test_pydantic_renderer_uses_active_render_attrs_session():
     assert len(result) <= 60
 
 
-def test_native_multiline_extension_repr_is_escaped():
-    result = render(pd.Series([1, 2, 3]), 200)
+@pytest.mark.parametrize(
+    "value",
+    [
+        pd.DataFrame({"a": [1, 2], "b": [3, 4]}),
+        pd.Series([1, 2, 3]),
+        pl.DataFrame({"a": [1, 2], "b": [3, 4]}),
+        pl.Series("values", [1, 2, 3]),
+        pa.table({"a": [1, 2], "b": [3, 4]}),
+        pa.chunked_array([[1, 2], [3]]),
+    ],
+)
+def test_multiline_native_repr_yields_to_typed_summary(value):
+    # Escaping a table repr onto one line destroys its alignment and spends
+    # budget on escapes, even when the escaped form would fit.
+    result = render(value, 600)
 
-    assert "\n" not in result
-    assert "\\n" in result
+    assert "\\n" not in result
+    assert "[1, 2, 3]" in result or "[(1, 3), (2, 4)]" in result

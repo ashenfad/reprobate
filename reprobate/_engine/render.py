@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from typing import TypeAlias
 
 from .._session import RenderSession, activate_session
-from ..registry import get_renderer
+from ..registry import get_builtin_converter, get_renderer
 from .context import (
     InferencePolicy,
     InspectionBudget,
@@ -131,6 +131,7 @@ def _render_value(obj: object, budget: int, context: RenderContext) -> str:
     custom = _custom_renderer(obj)
     if custom is not None:
         return _render_custom(obj, budget, context, custom)
+    obj = _as_builtin(obj)
 
     if isinstance(obj, tuple) and hasattr(type(obj), "_fields"):
         return _render_namedtuple(obj, budget, context)
@@ -174,6 +175,21 @@ def _custom_renderer(obj: object):
     if method is not None:
         return lambda value, budget: method(value, budget)
     return get_renderer(type(obj))
+
+
+def _as_builtin(obj: object) -> object:
+    """Substitute the registered builtin equivalent of a foreign scalar.
+
+    A custom renderer for the type wins, and a failed conversion keeps the
+    original so the value degrades through its own repr.
+    """
+    converter = get_builtin_converter(type(obj))
+    if converter is None or _custom_renderer(obj) is not None:
+        return obj
+    try:
+        return converter(obj)
+    except Exception:
+        return obj
 
 
 def _render_custom(obj: object, budget: int, context: RenderContext, renderer) -> str:
@@ -487,20 +503,25 @@ def _is_uniform(
     must be exact builtin scalars of one type with equal values — subclass
     comparisons run user code that may raise, and subclass state can differ
     even when values compare equal. Floats must also agree on repr so
-    ``0.0`` never stands in for ``-0.0``.
+    ``0.0`` never stands in for ``-0.0``. Registered foreign scalars compare
+    through their builtin equivalents, and only against their own type.
     """
     iterator = iter(obj)
     first = next(iterator)
+    builtin = _as_builtin(first)
+    if type(builtin) not in _UNIFORM_SCALARS:
+        builtin = None
     for value in iterator:
         if not work.consume():
             return False
         if value is first:
             continue
-        if type(first) not in _UNIFORM_SCALARS or type(value) is not type(first):
+        if builtin is None or type(value) is not type(first):
             return False
-        if value != first:
+        value = _as_builtin(value)
+        if type(value) is not type(builtin) or value != builtin:
             return False
-        if isinstance(first, float) and repr(value) != repr(first):
+        if isinstance(builtin, float) and repr(value) != repr(builtin):
             return False
     return True
 
@@ -905,6 +926,7 @@ def _minimum_key(obj: object) -> str:
 
 
 def _minimum(obj: object) -> str:
+    obj = _as_builtin(obj)
     if _is_scalar(obj):
         stub = f"<{type(obj).__name__}>" if obj is not None else "<None>"
         full = _bounded_scalar_repr(obj, len(stub))
@@ -949,6 +971,7 @@ def _write_full(
 ) -> None:
     if work is not None and not work.consume():
         raise _CannotRenderFull
+    obj = _as_builtin(obj)
     if isinstance(obj, (str, bytes)) or _is_scalar(obj):
         # A subclass with its own repr controls its own spelling; the probe
         # must not claim the builtin rendering is complete for it.

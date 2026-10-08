@@ -149,7 +149,8 @@ reprobate renders agent workspace objects for LLM context windows in [agex](http
 | Collections | `deque`, `defaultdict`, `Counter` | Type-aware wrappers (factory name, most-common order) |
 | Structured | `dataclass`, `namedtuple` | Field-aware decomposition, respects `repr=False` |
 | Objects | anything with `__dict__` or `__slots__` | Attribute decomposition, public attrs only |
-| Optional | numpy, pandas, polars, pyarrow, Pillow, pydantic | Shape, dtype, typed-column schema, and bounded value summaries (auto-activates when installed) |
+| Optional | numpy, pandas, polars, pyarrow, Pillow, pydantic | Shape, dtype, typed-column schema, and bounded value or leading-row summaries such as `DataFrame(3x2, {'name': str, 'score': int64}, [('ada', 7), ...2 more])` (auto-activates when installed) |
+| numpy scalars | `np.int64`, `np.float32`, `np.str_`, ... | Render as their builtin value (`3`, not `np.int64(3)`); extended precision and datetimes keep their own repr |
 
 ## Development
 
