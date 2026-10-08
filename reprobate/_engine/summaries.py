@@ -3,6 +3,7 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+from .render import as_builtin
 from .text import single_line
 
 RenderValue = Callable[[object, int], str]
@@ -88,7 +89,9 @@ def render_table_summary(
         if name_budget <= 0:
             break
 
-        complete_name = native_repr_if_fits(column.name, name_budget)
+        # Compare against the value the engine renders, so a numpy scalar
+        # label such as np.int64(1) counts as complete when it renders as 1.
+        complete_name = native_repr_if_fits(as_builtin(column.name), name_budget)
         if complete_name is None:
             break
         name = render_value(column.name, name_budget)
@@ -138,7 +141,7 @@ def render_array_summary(
         value_budget = budget - len(header) - len(prefix) - 1
         if value_budget <= 0:
             break
-        complete_value = native_repr_if_fits(value, value_budget)
+        complete_value = native_repr_if_fits(as_builtin(value), value_budget)
         if complete_value is None:
             break
         rendered = render_value(value, value_budget)

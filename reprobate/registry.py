@@ -39,7 +39,9 @@ def register_builtin(cls: type) -> Callable[[Converter], Converter]:
 
     The engine renders the converted value in place of the original, so it
     takes part in complete-value probes and uniform collapse like any builtin.
-    A renderer registered for the same type takes precedence.
+    A renderer registered for the same type takes precedence. The conversion
+    applies to exactly this type: a subclass may carry its own repr or state,
+    so it is never converted on its ancestor's behalf.
     """
 
     def decorator(fn: Converter) -> Converter:
@@ -50,8 +52,5 @@ def register_builtin(cls: type) -> Callable[[Converter], Converter]:
 
 
 def get_builtin_converter(cls: type) -> Converter | None:
-    """Look up a builtin conversion for a type, checking MRO."""
-    for klass in cls.__mro__:
-        if klass in _builtin_converters:
-            return _builtin_converters[klass]
-    return None
+    """Look up the builtin conversion registered for exactly this type."""
+    return _builtin_converters.get(cls)
