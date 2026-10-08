@@ -82,6 +82,27 @@ class TestScalars:
         value = np.datetime64("2024-01-01")
         assert reprobate.render(value, 50) == repr(value)
 
+    @pytest.mark.parametrize("unit", ["s", "ns"])
+    def test_timedelta_keeps_its_unit(self, unit):
+        # timedelta64 subclasses signedinteger, and int() of a nanosecond
+        # timedelta silently drops the unit.
+        value = np.timedelta64(5, unit)
+        assert reprobate.render(value, 50) == repr(value)
+
+    def test_subclass_with_own_repr_is_not_converted(self):
+        class Tagged(np.float64):
+            def __repr__(self):
+                return f"Tagged({float(self)})"
+
+        assert reprobate.render([Tagged(1.0)], 50) == "[Tagged(1.0)]"
+
+    def test_subclass_is_not_converted_on_its_ancestors_behalf(self):
+        class Plain(np.int64):
+            pass
+
+        value = Plain(3)
+        assert reprobate.render(value, 50) == repr(value)
+
     def test_registered_renderer_takes_precedence(self):
         class Tagged(np.float64):
             pass

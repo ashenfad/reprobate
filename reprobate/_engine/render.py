@@ -131,7 +131,7 @@ def _render_value(obj: object, budget: int, context: RenderContext) -> str:
     custom = _custom_renderer(obj)
     if custom is not None:
         return _render_custom(obj, budget, context, custom)
-    obj = _as_builtin(obj)
+    obj = as_builtin(obj)
 
     if isinstance(obj, tuple) and hasattr(type(obj), "_fields"):
         return _render_namedtuple(obj, budget, context)
@@ -177,7 +177,7 @@ def _custom_renderer(obj: object):
     return get_renderer(type(obj))
 
 
-def _as_builtin(obj: object) -> object:
+def as_builtin(obj: object) -> object:
     """Substitute the registered builtin equivalent of a foreign scalar.
 
     A custom renderer for the type wins, and a failed conversion keeps the
@@ -508,7 +508,7 @@ def _is_uniform(
     """
     iterator = iter(obj)
     first = next(iterator)
-    builtin = _as_builtin(first)
+    builtin = as_builtin(first)
     if type(builtin) not in _UNIFORM_SCALARS:
         builtin = None
     for value in iterator:
@@ -518,7 +518,7 @@ def _is_uniform(
             continue
         if builtin is None or type(value) is not type(first):
             return False
-        value = _as_builtin(value)
+        value = as_builtin(value)
         if type(value) is not type(builtin) or value != builtin:
             return False
         if isinstance(builtin, float) and repr(value) != repr(builtin):
@@ -926,7 +926,7 @@ def _minimum_key(obj: object) -> str:
 
 
 def _minimum(obj: object) -> str:
-    obj = _as_builtin(obj)
+    obj = as_builtin(obj)
     if _is_scalar(obj):
         stub = f"<{type(obj).__name__}>" if obj is not None else "<None>"
         full = _bounded_scalar_repr(obj, len(stub))
@@ -971,7 +971,7 @@ def _write_full(
 ) -> None:
     if work is not None and not work.consume():
         raise _CannotRenderFull
-    obj = _as_builtin(obj)
+    obj = as_builtin(obj)
     if isinstance(obj, (str, bytes)) or _is_scalar(obj):
         # A subclass with its own repr controls its own spelling; the probe
         # must not claim the builtin rendering is complete for it.

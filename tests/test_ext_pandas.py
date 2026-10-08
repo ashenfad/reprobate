@@ -3,6 +3,7 @@
 import pytest
 
 pd = pytest.importorskip("pandas")
+np = pytest.importorskip("numpy")
 
 import reprobate  # noqa: E402
 
@@ -63,8 +64,20 @@ class TestDataFrame:
         assert r.endswith("more])")
         assert len(r) <= 80
 
+    def test_numpy_scalar_labels_count_as_complete(self):
+        columns = pd.Index([np.int64(1), "b"], dtype=object)
+        df = pd.DataFrame([[1, 2]], columns=columns)
+
+        r = reprobate.render(df, 200)
+
+        assert r == "DataFrame(1x2, {1: int64, 'b': int64}, [(1, 2)])"
+
 
 class TestSeries:
+    def test_numpy_scalar_name_counts_as_complete(self):
+        s = pd.Series([1, 2], name=np.int64(5))
+        assert reprobate.render(s, 200) == "Series(2, int64, name=5, [1, 2])"
+
     def test_values_render_as_builtins(self):
         s = pd.Series([1, 2, 3], dtype="int64", name="n")
         assert reprobate.render(s, 200) == "Series(3, int64, name='n', [1, 2, 3])"

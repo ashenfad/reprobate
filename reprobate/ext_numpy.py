@@ -24,11 +24,28 @@ if np is not None:
             value_at=flat.__getitem__,
         )
 
+    def _concrete_integer_types() -> set[type]:
+        """numpy's own integer scalar types; user subclasses are excluded.
+
+        ``timedelta64`` subclasses ``signedinteger`` but carries a unit, so it
+        has no builtin equivalent.
+        """
+        found: set[type] = set()
+        pending = [np.integer]
+        while pending:
+            for sub in pending.pop().__subclasses__():
+                if sub.__module__ == "numpy" and not issubclass(sub, np.timedelta64):
+                    found.add(sub)
+                    pending.append(sub)
+        return found
+
     # numpy 2 scalar reprs repeat the dtype (``np.int64(3)``). Scalars with an
     # exact builtin equivalent render as that builtin instead. Extended
     # precision types and datetimes have none and keep their own repr.
+    # Conversions match exact types, so every concrete type is listed.
     register_builtin(np.bool_)(bool)
-    register_builtin(np.integer)(int)
+    for _integer in _concrete_integer_types():
+        register_builtin(_integer)(int)
     register_builtin(np.float64)(float)
     register_builtin(np.complex128)(complex)
     register_builtin(np.str_)(str)
