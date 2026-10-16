@@ -228,11 +228,23 @@ def _is_scalar(obj: object) -> bool:
     return obj is None or isinstance(obj, (bool, int, float))
 
 
+# What the buffer renderers call on a value: a subclass that overrides any
+# of these could make them disagree with its repr, or raise where repr does
+# not, so it renders through its own repr instead.
+_BUFFER_METHODS = ("__repr__", "__len__", "__getitem__", "__iter__")
+
+
 def _faithful_scalar(obj: object) -> bool:
     """True when the builtin scalar, text or buffer rendering matches its repr."""
     if obj is None or isinstance(obj, bool):
         return True
-    for base in (int, float, str, bytes, bytearray, array.array):
+    for base in (bytearray, array.array):
+        if isinstance(obj, base):
+            cls = type(obj)
+            return cls is base or all(
+                getattr(cls, name) is getattr(base, name) for name in _BUFFER_METHODS
+            )
+    for base in (int, float, str, bytes):
         if isinstance(obj, base):
             return type(obj) is base or type(obj).__repr__ is base.__repr__
     return True
@@ -391,13 +403,26 @@ def _byte_view_length(obj: memoryview) -> int | None:
     return None
 
 
+#: How much of a view's format a summary shows. An exporter's format can be
+#: arbitrarily long (a structured dtype with many fields), and the summary's
+#: cost must not grow with it.
+_FORMAT_PREVIEW = 24
+
+
+def _format_label(fmt: str) -> str:
+    """A view's format, cut to a bounded preview and kept on one line."""
+    if len(fmt) > _FORMAT_PREVIEW:
+        return single_line(fmt[:_FORMAT_PREVIEW]) + "..."
+    return single_line(fmt)
+
+
 def _memoryview_stub(obj: memoryview) -> str:
     try:
         length = _byte_view_length(obj)
         if length is not None:
             return f"<memoryview({length})>"
         shape = ", ".join(str(dim) for dim in obj.shape)
-        return f"<memoryview[{obj.format}]({shape})>"
+        return f"<memoryview[{_format_label(obj.format)}]({shape})>"
     except ValueError:
         # A released view refuses every attribute access.
         return "<memoryview>"
