@@ -1,7 +1,9 @@
 """Budget-bounded rendering engine for Python values and object graphs."""
 
+import array
 import collections
 import dataclasses
+import itertools
 from collections.abc import Iterable
 from typing import TypeAlias
 
@@ -155,6 +157,17 @@ def _render_value(obj: object, budget: int, context: RenderContext) -> str:
         if isinstance(obj, str):
             return _render_text(obj, budget, "str")
         return _render_text(obj, budget, "bytes")
+    if isinstance(obj, (bytearray, array.array)):
+        if not _faithful_scalar(obj):
+            native = _normalized_native_repr(obj, budget)
+            if native is not None:
+                return native
+        if isinstance(obj, bytearray):
+            name = type(obj).__name__
+            return _render_text(obj, budget, name, spelling=(f"{name}(", ")"))
+        return _render_array(obj, budget)
+    if isinstance(obj, memoryview):
+        return _render_memoryview(obj, budget)
     if isinstance(obj, collections.defaultdict):
         return _render_defaultdict(obj, budget, context)
     if isinstance(obj, collections.Counter):
@@ -216,10 +229,10 @@ def _is_scalar(obj: object) -> bool:
 
 
 def _faithful_scalar(obj: object) -> bool:
-    """True when the builtin scalar/text rendering matches the object's own repr."""
+    """True when the builtin scalar, text or buffer rendering matches its repr."""
     if obj is None or isinstance(obj, bool):
         return True
-    for base in (int, float, str, bytes):
+    for base in (int, float, str, bytes, bytearray, array.array):
         if isinstance(obj, base):
             return type(obj) is base or type(obj).__repr__ is base.__repr__
     return True
@@ -286,8 +299,20 @@ def _render_scalar(obj: _Scalar, budget: int) -> str:
     return _fit("...", budget)
 
 
-def _render_text(obj: str | bytes, budget: int, kind: str) -> str:
-    preview = _literal_preview(obj, budget)
+def _render_text(
+    obj: str | bytes | bytearray,
+    budget: int,
+    kind: str,
+    *,
+    spelling: tuple[str, str] = ("", ""),
+) -> str:
+    """Render text that does not fit as a sized preview, bare preview, or stub.
+
+    The sized form names the type, so its preview is the plain literal. The bare
+    preview stands alone and wraps the literal in ``spelling`` so a bytearray
+    still reads as ``bytearray(b'...')`` rather than passing for bytes.
+    """
+    preview = _literal_preview(obj, budget, spelling)
     length_prefix = f"<{kind}({len(obj)}): "
     inner_budget = budget - len(length_prefix) - 1
 
@@ -307,8 +332,16 @@ def _render_text(obj: str | bytes, budget: int, kind: str) -> str:
     return _fit(f"<{kind}>", budget)
 
 
-def _literal_preview(obj: str | bytes, budget: int) -> str:
+def _literal_preview(
+    obj: str | bytes | bytearray | memoryview,
+    budget: int,
+    spelling: tuple[str, str] = ("", ""),
+) -> str:
     """Return the longest escaped, quoted prefix with an ellipsis that fits.
+
+    Byte buffers preview as a bytes literal of a prefix slice, which copies only
+    that slice; ``spelling`` wraps the literal in constant text such as
+    ``bytearray(`` and ``)``, which keeps the length monotonic.
 
     ``len(repr(obj[:size]))`` is nondecreasing in ``size``: every character adds
     at least one output character, and a quote-style flip only ever lengthens
@@ -319,9 +352,11 @@ def _literal_preview(obj: str | bytes, budget: int) -> str:
     if budget < 5:
         return ""
 
+    opener, closer = spelling
+
     def candidate(size: int) -> str:
-        literal = repr(obj[:size])
-        return literal[:-1] + "..." + literal[-1]
+        literal = repr(_text_prefix(obj, size))
+        return opener + literal[:-1] + "..." + literal[-1] + closer
 
     # Each source character costs at least one output character, so prefixes
     # longer than the budget can never fit.
@@ -335,6 +370,85 @@ def _literal_preview(obj: str | bytes, budget: int) -> str:
         else:
             high = middle - 1
     return candidate(low)
+
+
+def _text_prefix(obj: str | bytes | bytearray | memoryview, size: int) -> str | bytes:
+    chunk = obj[:size]
+    return chunk if isinstance(chunk, (str, bytes)) else bytes(chunk)
+
+
+_BYTE_FORMATS = frozenset({"B", "b", "c"})
+
+
+def _byte_view_length(obj: memoryview) -> int | None:
+    """Length of a one-dimensional view of single bytes, else None.
+
+    Only such views slice into byte prefixes; other formats and shapes are
+    summarized by format and shape without reading their contents.
+    """
+    if obj.ndim == 1 and obj.format in _BYTE_FORMATS:
+        return obj.nbytes
+    return None
+
+
+def _memoryview_stub(obj: memoryview) -> str:
+    try:
+        length = _byte_view_length(obj)
+        if length is not None:
+            return f"<memoryview({length})>"
+        shape = ", ".join(str(dim) for dim in obj.shape)
+        return f"<memoryview[{obj.format}]({shape})>"
+    except ValueError:
+        # A released view refuses every attribute access.
+        return "<memoryview>"
+
+
+def _render_memoryview(obj: memoryview, budget: int) -> str:
+    """Render a view by its contents; its own repr shows only an address."""
+    try:
+        length = _byte_view_length(obj)
+    except ValueError:
+        length = None
+    if length is not None:
+        prefix = f"<memoryview({length}): "
+        inner_budget = budget - len(prefix) - 1
+        # A bytes literal spells at least one character per byte plus ``b''``.
+        if length + 3 <= inner_budget:
+            literal = repr(bytes(obj))
+            if len(literal) <= inner_budget:
+                return f"{prefix}{literal}>"
+        if inner_budget >= 12:
+            inner = _literal_preview(obj, inner_budget)
+            if len(inner) >= 8:
+                return f"{prefix}{inner}>"
+    return _fit_summary(_memoryview_stub(obj), budget)
+
+
+def _array_stub(obj: array.array) -> str:
+    return f"<{type(obj).__name__}[{obj.typecode}]({len(obj)})>"
+
+
+def _render_array(obj: array.array, budget: int) -> str:
+    """Render ``<array[d](n): 0.5, 1.5, ...>`` from leading elements only."""
+    stub = _array_stub(obj)
+    head = stub[:-1] + ": "
+    tail = ", ...>"
+    parts: list[str] = []
+    used = len(head) + len(tail)
+    # Every element costs at least one character, so at most ``budget`` are read.
+    for item in itertools.islice(obj, budget):
+        text = repr(item)
+        cost = len(text) + (2 if parts else 0)
+        if used + cost > budget:
+            break
+        parts.append(text)
+        used += cost
+    if parts:
+        closer = ">" if len(parts) == len(obj) else tail
+        return head + ", ".join(parts) + closer
+    if len(stub) <= budget:
+        return stub
+    return _fit(f"<{type(obj).__name__}>", budget)
 
 
 def _render_sequence(
@@ -945,6 +1059,15 @@ def _minimum(obj: object) -> str:
             if len(full) <= len(stub):
                 return full
         return stub
+    if isinstance(obj, (bytearray, array.array)):
+        if isinstance(obj, bytearray):
+            stub = f"<{type(obj).__name__}({len(obj)})>"
+        else:
+            stub = _array_stub(obj)
+        full = _try_full(obj, len(stub))
+        return full if full is not None else stub
+    if isinstance(obj, memoryview):
+        return _memoryview_stub(obj)
     if isinstance(obj, _STRUCTURED_TYPES):
         return f"<{type(obj).__name__}({len(obj)})>"
     return f"<{type(obj).__name__}>"
@@ -972,7 +1095,7 @@ def _write_full(
     if work is not None and not work.consume():
         raise _CannotRenderFull
     obj = as_builtin(obj)
-    if isinstance(obj, (str, bytes)) or _is_scalar(obj):
+    if isinstance(obj, (str, bytes, bytearray, array.array)) or _is_scalar(obj):
         # A subclass with its own repr controls its own spelling; the probe
         # must not claim the builtin rendering is complete for it.
         if not _faithful_scalar(obj):
@@ -989,6 +1112,22 @@ def _write_full(
     if isinstance(obj, bytes):
         # A bytes repr has the same lower bound plus its leading ``b`` marker.
         if len(obj) + 3 > writer.remaining:
+            raise BudgetExceeded
+        writer.write(repr(obj))
+        return
+
+    if isinstance(obj, bytearray):
+        # ``name(b'...')`` adds the type name and parentheses to the bytes bound.
+        if len(obj) + len(type(obj).__name__) + 5 > writer.remaining:
+            raise BudgetExceeded
+        writer.write(repr(obj))
+        return
+
+    if isinstance(obj, array.array):
+        # ``name('u', '...')`` spells a character per element and other typecodes
+        # spell a digit plus a separator, so length bounds the repr from below.
+        per_item = 1 if obj.typecode in "uw" else 3
+        if len(obj) * per_item + len(type(obj).__name__) + 5 > writer.remaining:
             raise BudgetExceeded
         writer.write(repr(obj))
         return
