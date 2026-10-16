@@ -144,6 +144,7 @@ reprobate renders agent workspace objects for LLM context windows in [agex](http
 |----------|-------|----------|
 | Primitives | `None`, `bool`, `int`, `float` | `repr()`, or a `<int>`-style stub when it cannot fit |
 | Strings | `str`, `bytes` | Quoted, escaped previews with `...`, plus length metadata when space allows: `<str(150): 'xxx...'>` |
+| Buffers | `bytearray`, `array.array`, `memoryview` | `repr()` when it fits, else a sized preview of the leading bytes or elements: `<bytearray(4096): b'\x00...'>`, `<array[d](500): 0.5, ...>`; byte views show their contents, `<memoryview(5): b'hello'>`, and other views their format and shape, `<memoryview[i](3, 4)>` |
 | Containers | `list`, `tuple`, `set`, `frozenset` | Head items + `...N more`, schema summaries when items cannot fit |
 | Dicts | `dict` | Key-value pairs + `...N more`; subclasses keep their own `repr` |
 | Collections | `deque`, `defaultdict`, `Counter` | Type-aware wrappers (factory name, most-common order) |
