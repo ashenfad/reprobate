@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.6] - 2026-10-16
 
 ### Fixed
 - Large `bytearray`, `memoryview` and `array.array` values render as a sized preview of their leading bytes or elements, such as `<bytearray(52428800): b'\x00\x00...'>`, without building the whole repr (a 50MB `bytearray` peaked at ~400MB and rendered as `<bytearray>`); a `memoryview` shows its contents instead of its address (#11)
