@@ -1,10 +1,5 @@
 """Optional renderer for PyArrow objects."""
 
-try:
-    import pyarrow as pa
-except ImportError:
-    pa = None
-
 from ._engine.summaries import (
     TableColumn,
     one_line_native_repr,
@@ -12,9 +7,17 @@ from ._engine.summaries import (
     render_table_summary,
 )
 from .core import render_child
-from .registry import register
+from .registry import register, register_lazy
 
-if pa is not None:
+
+def install() -> None:
+    """Register the PyArrow renderers.
+
+    Run by the registry the first time it meets a pyarrow type: an
+    object of that type exists, so pyarrow is already loaded and the
+    import below costs nothing.
+    """
+    import pyarrow as pa
 
     @register(pa.Table)
     def render_table(obj: "pa.Table", budget: int) -> str:
@@ -61,3 +64,6 @@ if pa is not None:
             render_child,
             value_at=lambda index: obj[index].as_py(),
         )
+
+
+register_lazy("pyarrow", install)

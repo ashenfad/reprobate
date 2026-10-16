@@ -1,15 +1,18 @@
 """Optional renderer for numpy arrays and scalars."""
 
-try:
-    import numpy as np
-except ImportError:
-    np = None
-
 from ._engine.summaries import render_array_summary
 from .core import render_child
-from .registry import register, register_builtin
+from .registry import register, register_builtin, register_lazy
 
-if np is not None:
+
+def install() -> None:
+    """Register the numpy renderers.
+
+    Run by the registry the first time it meets a numpy type: an
+    object of that type exists, so numpy is already loaded and the
+    import below costs nothing.
+    """
+    import numpy as np
 
     @register(np.ndarray)
     def render_ndarray(obj: "np.ndarray", budget: int) -> str:
@@ -58,3 +61,6 @@ if np is not None:
     for _reduced in (np.float16, np.float32):
         register_builtin(_reduced)(lambda value: float(str(value)))
     register_builtin(np.complex64)(lambda value: complex(str(value)))
+
+
+register_lazy("numpy", install)

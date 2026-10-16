@@ -1,10 +1,5 @@
 """Optional renderer for polars objects."""
 
-try:
-    import polars as pl
-except ImportError:
-    pl = None
-
 from ._engine.summaries import (
     TableColumn,
     one_line_native_repr,
@@ -12,9 +7,17 @@ from ._engine.summaries import (
     render_table_summary,
 )
 from .core import render_child
-from .registry import register
+from .registry import register, register_lazy
 
-if pl is not None:
+
+def install() -> None:
+    """Register the polars renderers.
+
+    Run by the registry the first time it meets a polars type: an
+    object of that type exists, so polars is already loaded and the
+    import below costs nothing.
+    """
+    import polars as pl
 
     @register(pl.DataFrame)
     def render_dataframe(obj: "pl.DataFrame", budget: int) -> str:
@@ -46,3 +49,6 @@ if pl is not None:
             value_at=obj.__getitem__,
             metadata=metadata,
         )
+
+
+register_lazy("polars", install)
