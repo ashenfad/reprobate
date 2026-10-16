@@ -101,3 +101,57 @@ def test_an_install_that_fails_leaves_generic_rendering():
         """
     )
     assert out == "True 1"
+
+
+def test_a_registration_made_before_first_render_is_kept():
+    """The library's own renderers arrive first, and the user's registration
+    replaces them, as it did when they were installed at import."""
+    pytest.importorskip("pandas")
+    out = _run(
+        """
+        import pandas as pd
+        import reprobate
+
+        @reprobate.register(pd.DataFrame)
+        def mine(obj, budget):
+            return "mine"
+
+        print(reprobate.render(pd.DataFrame({"a": [1]}), 60))
+        print(reprobate.render(pd.Series([1, 2]), 60).startswith("Series("))
+        """
+    )
+    assert out.splitlines() == ["mine", "True"]
+
+
+def test_concurrent_first_renders_wait_for_the_install():
+    """A lookup that arrives while a library's install is running waits for
+    it, rather than finding neither the installer nor its renderers."""
+    out = _run(
+        """
+        import threading, time
+        import reprobate
+        from reprobate.registry import register_lazy
+
+        Thing = type("Thing", (), {"__module__": "slowlib.things"})
+
+        def install():
+            time.sleep(0.3)  # a slow install: numpy walks its scalar types
+            reprobate.register(Thing)(lambda obj, budget: "custom")
+
+        register_lazy("slowlib", install)
+        barrier = threading.Barrier(2)
+        results = []
+
+        def render():
+            barrier.wait()
+            results.append(reprobate.render(Thing(), 60))
+
+        threads = [threading.Thread(target=render) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        print(sorted(results))
+        """
+    )
+    assert out == "['custom', 'custom']"

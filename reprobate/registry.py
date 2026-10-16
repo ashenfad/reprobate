@@ -1,5 +1,6 @@
 """Type-specific renderer registry."""
 
+import threading
 from typing import Any, Callable
 
 Renderer = Callable[[Any, int], str]
@@ -8,6 +9,13 @@ Converter = Callable[[Any], object]
 _registry: dict[type, Renderer] = {}
 _builtin_converters: dict[type, Converter] = {}
 _lazy: dict[str, Callable[[], None]] = {}
+# Installs run one at a time, and a package stays pending until its install
+# has finished: a lookup that arrives meanwhile waits rather than finding
+# neither the installer nor its renderers. Reentrant, and the package marked
+# in progress, because an install registers renderers, and registering runs
+# pending installs first.
+_install_lock = threading.RLock()
+_installing: set[str] = set()
 
 
 def register(cls: type) -> Callable[[Renderer], Renderer]:
@@ -21,6 +29,10 @@ def register(cls: type) -> Callable[[Renderer], Renderer]:
     """
 
     def decorator(fn: Renderer) -> Renderer:
+        # the library's own renderers go in first, so this one replaces
+        # them rather than being replaced when they arrive
+        if _lazy:
+            _install_for(cls)
         _registry[cls] = fn
         return fn
 
@@ -42,14 +54,20 @@ def register_lazy(package: str, install: Callable[[], None]) -> None:
 
 def _install_for(cls: type) -> None:
     """Run the deferred registrations for the packages ``cls`` comes from."""
-    for klass in cls.__mro__:
-        package = (getattr(klass, "__module__", None) or "").partition(".")[0]
-        install = _lazy.pop(package, None)
-        if install is not None:
+    with _install_lock:
+        for klass in cls.__mro__:
+            package = (getattr(klass, "__module__", None) or "").partition(".")[0]
+            install = _lazy.get(package)
+            if install is None or package in _installing:
+                continue
+            _installing.add(package)
             try:
                 install()
             except Exception:
                 pass  # no renderers for that library: render it generically
+            finally:
+                _installing.discard(package)
+                _lazy.pop(package, None)
 
 
 def get_renderer(cls: type) -> Renderer | None:
@@ -73,6 +91,8 @@ def register_builtin(cls: type) -> Callable[[Converter], Converter]:
     """
 
     def decorator(fn: Converter) -> Converter:
+        if _lazy:
+            _install_for(cls)
         _builtin_converters[cls] = fn
         return fn
 
