@@ -12,7 +12,8 @@ __all__ = [
     "render_child",
 ]
 
-# Auto-register optional type renderers when their deps are available.
+# Optional type renderers. Each registers itself the first time an object of
+# its library's types is rendered, so importing reprobate imports none of them.
 from . import (
     ext_arrow,  # noqa: F401
     ext_numpy,  # noqa: F401

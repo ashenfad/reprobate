@@ -1,13 +1,16 @@
 """Optional renderer for PIL/Pillow images."""
 
-try:
+from .registry import register, register_lazy
+
+
+def install() -> None:
+    """Register the Pillow renderers.
+
+    Run by the registry the first time it meets a PIL type: an
+    object of that type exists, so PIL is already loaded and the
+    import below costs nothing.
+    """
     from PIL import Image
-except ImportError:
-    Image = None
-
-from .registry import register
-
-if Image is not None:
 
     @register(Image.Image)
     def render_image(obj: "Image.Image", budget: int) -> str:
@@ -18,3 +21,6 @@ if Image is not None:
         header = f"Image({w}x{h}, {mode}{fmt_part})"
 
         return header[:budget]
+
+
+register_lazy("PIL", install)

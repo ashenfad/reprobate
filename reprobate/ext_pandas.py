@@ -1,10 +1,5 @@
 """Optional renderer for pandas objects."""
 
-try:
-    import pandas as pd
-except ImportError:
-    pd = None
-
 from ._engine.summaries import (
     TableColumn,
     one_line_native_repr,
@@ -12,9 +7,17 @@ from ._engine.summaries import (
     render_table_summary,
 )
 from .core import render_child
-from .registry import register
+from .registry import register, register_lazy
 
-if pd is not None:
+
+def install() -> None:
+    """Register the pandas renderers.
+
+    Run by the registry the first time it meets a pandas type: an
+    object of that type exists, so pandas is already loaded and the
+    import below costs nothing.
+    """
+    import pandas as pd
 
     @register(pd.DataFrame)
     def render_dataframe(obj: "pd.DataFrame", budget: int) -> str:
@@ -52,3 +55,6 @@ if pd is not None:
             value_at=obj.iloc.__getitem__,
             metadata=metadata,
         )
+
+
+register_lazy("pandas", install)
