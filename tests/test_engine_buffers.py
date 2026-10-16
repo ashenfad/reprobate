@@ -165,3 +165,59 @@ def test_buffer_budgets_are_never_exceeded():
             for inference in ("off", "best_effort"):
                 result = render(value, budget, inference=inference)
                 assert len(result) <= budget, (value, budget, result)
+
+
+class _LenRaises(bytearray):
+    def __len__(self):
+        raise RuntimeError("len")
+
+
+class _GetitemRaises(array.array):
+    def __getitem__(self, index):
+        raise RuntimeError("getitem")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [_LenRaises(b"abc"), _GetitemRaises("i", [1, 2, 3])],
+    ids=["bytearray-len", "array-getitem"],
+)
+def test_a_subclass_overriding_what_the_preview_uses_renders_by_its_repr(value):
+    """It keeps the base repr but not the base behaviour, so the buffer path
+    would call its override; its own repr is rendered instead."""
+    assert render(value, 200) == repr(value)
+
+
+def _view_of_struct(fields):
+    import ctypes
+
+    struct = type("S", (ctypes.Structure,), {"_fields_": fields})
+    return memoryview(struct())
+
+
+def test_a_long_view_format_is_summarized_without_its_whole_text():
+    import ctypes
+
+    view = _view_of_struct([(f"field{i}", ctypes.c_int) for i in range(20_000)])
+    assert len(view.format) > 100_000
+    tracemalloc.start()
+    try:
+        rendered = render(view, 60)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert len(rendered) <= 60
+    assert rendered.startswith("<memoryview[")
+    # Reading the format allocates it once; building the summary around a
+    # copy of it would allocate it again.
+    assert peak < 1.5 * len(view.format)
+
+
+def test_a_view_format_with_a_newline_stays_on_one_line():
+    import ctypes
+
+    view = _view_of_struct([("a\nb", ctypes.c_int)])
+    assert "\n" in view.format
+    rendered = render(view, 200)
+    assert "\n" not in rendered
+    assert "\\n" in rendered
